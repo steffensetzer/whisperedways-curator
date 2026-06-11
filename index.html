@@ -733,7 +733,7 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
 
       {err&&<div style={{background:'#fee',color:'var(--red)',padding:'10px 14px',borderRadius:6,marginBottom:16,fontSize:13,textAlign:'left',whiteSpace:'pre-line',lineHeight:1.5}}>{err}</div>}
 
-      <input type="email" placeholder="E-Mail-Adresse" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="email" autoFocus
+      <input type="email" placeholder="E-Mail-Adresse / Username" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="email" autoFocus
         onKeyDown={e=>{if(e.key==='Enter') document.getElementById('ww-login-pw')?.focus();}}/>
 
       <input id="ww-login-pw" type="password" placeholder="Passwort" value={password} onChange={e=>setPassword(e.target.value)} style={{...inputStyle,marginBottom:needsApiKey?12:24}} autoComplete="current-password"
