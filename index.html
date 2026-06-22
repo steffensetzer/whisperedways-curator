@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.15.1 (Emotional)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.16.0 (Freigabe-Strecke)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -614,11 +614,14 @@ const SESSION_KEY='ww_session';
 const SESSION_HOURS=8;
 const ROLE_LABELS={admin:'Admin',curator_master:'Master',curator:'Kurator'};
 const ROLE_COLORS={admin:'var(--coral)',curator_master:'var(--sage)',curator:'#888'};
-// Status-Maschine (analog adamare): entwurf → übergeben → in_generierung → veröffentlicht, plus fehler.
-// 'draft' wird als Alias für 'entwurf' geführt (Backend-Erbe aus adamare-Pipeline).
-const STATUS_LABELS={entwurf:'Entwurf',draft:'Entwurf','übergeben':'Übergeben',in_generierung:'In Generierung','veröffentlicht':'Veröffentlicht',fehler:'Fehler'};
-const STATUS_COLORS={entwurf:'#888',draft:'#888','übergeben':'#E07A5F',in_generierung:'#3498DB','veröffentlicht':'#4CAF50',fehler:'#D32F2F'};
-const isEditableStatus=(s)=>!s||s==='entwurf'||s==='draft';
+// v0.16: Freigabe-Strecke. Status-Maschine (ASCII, Kontrakt WF1 v2):
+//   entwurf → uebergeben → freigegeben → in_generierung → veroeffentlicht
+//   uebergeben → zurueckgespielt → uebergeben (Überarbeitungsschleife)
+// 'draft' = Alias für 'entwurf' (Backend-Erbe adamare). Umlaut-Schlüssel ('übergeben'/'veröffentlicht')
+// bleiben als REINE LESE-ALIASE erhalten, damit Altzeilen korrekt angezeigt werden; gesendet wird nur ASCII.
+const STATUS_LABELS={entwurf:'Entwurf',draft:'Entwurf',uebergeben:'Übergeben','übergeben':'Übergeben',freigegeben:'Freigegeben',in_generierung:'In Generierung',veroeffentlicht:'Veröffentlicht','veröffentlicht':'Veröffentlicht',zurueckgespielt:'Zurückgespielt',fehler:'Fehler'};
+const STATUS_COLORS={entwurf:'#888',draft:'#888',uebergeben:'#E07A5F','übergeben':'#E07A5F',freigegeben:'#7A8B6F',in_generierung:'#3498DB',veroeffentlicht:'#4CAF50','veröffentlicht':'#4CAF50',zurueckgespielt:'#E6A23C',fehler:'#D32F2F'};
+const isEditableStatus=(s)=>!s||s==='entwurf'||s==='draft'||s==='zurueckgespielt';
 
 async function sha256(text){
   const enc=new TextEncoder();
@@ -733,7 +736,7 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
 
       {err&&<div style={{background:'#fee',color:'var(--red)',padding:'10px 14px',borderRadius:6,marginBottom:16,fontSize:13,textAlign:'left',whiteSpace:'pre-line',lineHeight:1.5}}>{err}</div>}
 
-      <input type="email" placeholder="E-Mail-Adresse / Username" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="email" autoFocus
+      <input type="email" placeholder="E-Mail-Adresse" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="email" autoFocus
         onKeyDown={e=>{if(e.key==='Enter') document.getElementById('ww-login-pw')?.focus();}}/>
 
       <input id="ww-login-pw" type="password" placeholder="Passwort" value={password} onChange={e=>setPassword(e.target.value)} style={{...inputStyle,marginBottom:needsApiKey?12:24}} autoComplete="current-password"
@@ -838,11 +841,15 @@ function App(){
   const[loadFilter,setLoadFilter]=useState('alle');
   const[deletingId,setDeletingId]=useState('');
   const[loadAccessError,setLoadAccessError]=useState('');
+  // === v0.16: Freigabe-Strecke (Freigeben/Zurückspielen/Generieren) ===
+  // rejectTargetId: das Modal kann auf den offenen Entwurf ODER eine Listenzeile wirken.
+  const[rejectTargetId,setRejectTargetId]=useState('');
+  const[actionBusy,setActionBusy]=useState('');   // entwurf_id, der gerade verarbeitet wird
+  const[actionToast,setActionToast]=useState(null); // {kind:'ok'|'err',msg}
 
   // Bootstrap
   const[taxonomien,setTaxonomien]=useState({});
   const[tagesartenList,setTagesartenList]=useState([]);
-  const[vocEmotional,setVocEmotional]=useState(null); // Reiseprofil-Vokabulare aus /taxonomien-emotional; null -> FALLBACK_VOC
   const[bootstrap,setBootstrap]=useState({status:'pending',error:''});
 
   // TRIP STATE
@@ -907,46 +914,36 @@ function App(){
   // Pendet eine Übergabe nach erfolgter Analyse? Nutzt der Confirm-Dialog vor /transfer.
   const[pendingTransferAfterAnalyse,setPendingTransferAfterAnalyse]=useState(false);
 
-  // Vokabulare für emotionale Taxonomie ("Reiseprofil").
-  // Quelle zur Laufzeit: GET /taxonomien-emotional (WF1, gespiegeltes /taxonomien-Muster).
-  // FALLBACK_VOC greift, solange der Endpoint fehlt oder fehlschlägt
-  // (identisch zur bisherigen Hartkodierung, Quelle: Spec §7).
-  const FALLBACK_VOC={
-    persoenlichkeitsfit:[
-      {value:'high-performer',label:'für High Performer'},
-      {value:'sensible-menschen',label:'für sensible Menschen'},
-      {value:'im-umbruch',label:'für Menschen im Umbruch'},
-      {value:'kreative',label:'für Kreative'},
-      {value:'alleinreisende',label:'für Alleinreisende'},
-      {value:'naturverbundene',label:'für naturverbundene Menschen'},
-      {value:'suchende',label:'für Suchende'},
-      {value:'genießer',label:'für Genießer'}
-    ],
-    emotionale_wirkung:[
-      {value:'regenerierend',label:'regenerierend'},
-      {value:'aktivierend',label:'aktivierend'},
-      {value:'transformativ',label:'transformativ'},
-      {value:'verbindend',label:'verbindend'}
-    ],
-    mentale_wirkung:[
-      {value:'klärend',label:'klärend'},
-      {value:'inspirierend',label:'inspirierend'},
-      {value:'reflexiv',label:'reflexiv'}
-    ],
-    archetyp:[
-      {value:'neustart',label:'Neustart'},
-      {value:'rueckverbindung',label:'Rückverbindung mit sich selbst'},
-      {value:'flucht-ueberforderung',label:'Flucht aus Überforderung'},
-      {value:'suche-lebendigkeit',label:'Suche nach Lebendigkeit'}
-    ],
-    tonalitaet_skala:['Tiefgründig','Eher persönlich','Mix','Eher locker','Humorvoll-leicht']
-  };
-  // Laufzeit-Vokabulare: aus /taxonomien-emotional, sonst Fallback.
-  const VOC_PERSOENLICHKEITSFIT=(vocEmotional&&vocEmotional.persoenlichkeitsfit)||FALLBACK_VOC.persoenlichkeitsfit;
-  const VOC_EMOTIONALE_WIRKUNG=(vocEmotional&&vocEmotional.emotionale_wirkung)||FALLBACK_VOC.emotionale_wirkung;
-  const VOC_MENTALE_WIRKUNG=(vocEmotional&&vocEmotional.mentale_wirkung)||FALLBACK_VOC.mentale_wirkung;
-  const VOC_ARCHETYP=(vocEmotional&&vocEmotional.archetyp)||FALLBACK_VOC.archetyp;
-  const TONALITAET_LABELS=(vocEmotional&&vocEmotional.tonalitaet_skala)||FALLBACK_VOC.tonalitaet_skala;
+  // Vokabulare für emotionale Taxonomie — würden später aus /taxonomien-emotional kommen.
+  // Solange noch nicht im WF9 angeschlossen, hardkodiert hier (Quelle: Spec §7).
+  const VOC_PERSOENLICHKEITSFIT=[
+    {value:'high-performer',label:'für High Performer'},
+    {value:'sensible-menschen',label:'für sensible Menschen'},
+    {value:'im-umbruch',label:'für Menschen im Umbruch'},
+    {value:'kreative',label:'für Kreative'},
+    {value:'alleinreisende',label:'für Alleinreisende'},
+    {value:'naturverbundene',label:'für naturverbundene Menschen'},
+    {value:'suchende',label:'für Suchende'},
+    {value:'genießer',label:'für Genießer'}
+  ];
+  const VOC_EMOTIONALE_WIRKUNG=[
+    {value:'regenerierend',label:'regenerierend'},
+    {value:'aktivierend',label:'aktivierend'},
+    {value:'transformativ',label:'transformativ'},
+    {value:'verbindend',label:'verbindend'}
+  ];
+  const VOC_MENTALE_WIRKUNG=[
+    {value:'klärend',label:'klärend'},
+    {value:'inspirierend',label:'inspirierend'},
+    {value:'reflexiv',label:'reflexiv'}
+  ];
+  const VOC_ARCHETYP=[
+    {value:'neustart',label:'Neustart'},
+    {value:'rueckverbindung',label:'Rückverbindung mit sich selbst'},
+    {value:'flucht-ueberforderung',label:'Flucht aus Überforderung'},
+    {value:'suche-lebendigkeit',label:'Suche nach Lebendigkeit'}
+  ];
+  const TONALITAET_LABELS=['Tiefgründig','Eher persönlich','Mix','Eher locker','Humorvoll-leicht'];
 
   // Helper: parse emotional_tags_json sicher
   const parseEmotionalTags=()=>{
@@ -1444,10 +1441,9 @@ function App(){
     let cancelled=false;
     (async()=>{
       setBootstrap({status:'pending',error:''});
-      const [tax,ta,emo]=await Promise.all([
+      const [tax,ta]=await Promise.all([
         apiCall('GET','/taxonomien').catch(e=>({error:e.message,terms:[]})),
-        apiCall('GET','/tagesarten').catch(e=>({error:e.message,tagesarten:[]})),
-        apiCall('GET','/taxonomien-emotional').catch(e=>({error:e.message,terms:[]}))
+        apiCall('GET','/tagesarten').catch(e=>({error:e.message,tagesarten:[]}))
       ]);
       if(cancelled) return;
 
@@ -1464,26 +1460,6 @@ function App(){
       });
       setTaxonomien(grouped);
       setTagesartenList(ta.tagesarten||[]);
-
-      // Emotionale Vokabulare ("Reiseprofil") gruppieren — gleiche Struktur wie /taxonomien.
-      // Fehlt/scheitert der Endpoint, bleibt vocEmotional=null und FALLBACK_VOC greift (kein Bootstrap-Fehler).
-      if(emo&&!emo.error&&Array.isArray(emo.terms)&&emo.terms.length){
-        const ge={};
-        emo.terms.forEach(t=>{
-          if(!t.taxonomy) return;
-          if(!ge[t.taxonomy]) ge[t.taxonomy]=[];
-          ge[t.taxonomy].push({value:t.slug||t.label_de,label:t.label_de||t.slug,sort:Number(t.sort)||0});
-        });
-        Object.keys(ge).forEach(k=>ge[k].sort((a,b)=>a.sort-b.sort));
-        const skala=(ge.tonalitaet_skala||[]).map(x=>x.label);
-        setVocEmotional({
-          persoenlichkeitsfit:ge.persoenlichkeitsfit||null,
-          emotionale_wirkung:ge.emotionale_wirkung||null,
-          mentale_wirkung:ge.mentale_wirkung||null,
-          archetyp:ge.archetyp||null,
-          tonalitaet_skala:skala.length?skala:null
-        });
-      }
 
       if(tax.error&&ta.error){
         setBootstrap({status:'error',error:`Bootstrap fehlgeschlagen — Taxonomien: ${tax.error} · Tagesarten: ${ta.error}`});
@@ -1994,7 +1970,7 @@ function App(){
   // v0.15: Eigentliche Transfer-Logik in separate Funktion ausgelagert, damit sie auch
   // nach Confirm-Dialog aufgerufen werden kann.
   const doTransfer=async()=>{
-    if(!confirm('Reise jetzt zur Master-Freigabe übergeben?\n\nNach Übergabe ist die Reise nicht mehr editierbar, bis sie vom Master/Admin freigegeben oder zurückgewiesen wurde.')) return;
+    if(!confirm('Reise jetzt zur Master-Freigabe übergeben?\n\nNach Übergabe ist die Reise nicht mehr editierbar, bis sie vom Master/Admin freigegeben oder zurückgespielt wurde.')) return;
 
     setTransferStatus('saving');setTransferMsg('Speichere…');
     try{
@@ -2006,11 +1982,11 @@ function App(){
         setTimeout(()=>setTransferStatus(null),8000);
         return;
       }
-      // 2) Status-Wechsel
+      // 2) Status-Wechsel (ASCII-Kontrakt: new_status='uebergeben')
       setTransferMsg('Übergebe an Master/Admin…');
       const statusRes=await apiCall('POST','/update-status',{
         draft_id:entwurfId,
-        new_status:'übergeben',
+        new_status:'uebergeben',
         user_id:currentUserId,
         role:role
       });
@@ -2020,7 +1996,7 @@ function App(){
         return;
       }
       // 3) Lokalen State aktualisieren
-      setTripStatus('übergeben');
+      setTripStatus('uebergeben');
       setRejectComment('');
       setTransferStatus('success');setTransferMsg('Übergeben — wartet auf Master-Freigabe.');
       // URL aktualisieren
@@ -2058,25 +2034,32 @@ function App(){
     window.location.href=window.location.pathname+'?entwurf_id='+encodeURIComponent(id);
   };
 
-  // ============== v0.13: REJECT-WORKFLOW (Master/Admin → Curator zurück) ==============
-  const openRejectModal=()=>{
-    if(!canManage){alert('Zurückweisen ist Admin/Master vorbehalten.');return;}
-    if(tripStatus!=='übergeben'){alert('Nur übergebene Reisen können zurückgewiesen werden.');return;}
+  // ============== v0.13/0.16: ZURÜCKSPIELEN (Master/Admin → Curator zurück) ==============
+  // v0.16: Kontrakt-Übergang uebergeben → zurueckgespielt (Pflicht: reject_comment).
+  // Modal wirkt auf den offenen Entwurf (id leer → entwurfId) ODER eine Listenzeile (id gesetzt).
+  const openRejectModal=(id,status)=>{
+    if(!canManage){alert('Zurückspielen ist Admin/Master vorbehalten.');return;}
+    const targetId=id||entwurfId;
+    const st=status||tripStatus;
+    if(!targetId){return;}
+    if(st!=='uebergeben'){alert('Nur übergebene Reisen können zurückgespielt werden.');return;}
+    setRejectTargetId(targetId);
     setRejectInput('');setRejectStatus(null);setRejectMsg('');setShowRejectModal(true);
   };
   const closeRejectModal=()=>{
     if(rejectStatus==='saving') return; // während des Calls Modal nicht zumachen
-    setShowRejectModal(false);setRejectInput('');setRejectStatus(null);setRejectMsg('');
+    setShowRejectModal(false);setRejectInput('');setRejectStatus(null);setRejectMsg('');setRejectTargetId('');
   };
   const submitReject=async()=>{
     const cmt=(rejectInput||'').trim();
     if(!cmt){alert('Bitte eine Begründung eingeben — der Curator soll wissen, was zu ändern ist.');return;}
-    if(!entwurfId){return;}
-    setRejectStatus('saving');setRejectMsg('Sende Zurückweisung…');
+    const targetId=rejectTargetId||entwurfId;
+    if(!targetId){return;}
+    setRejectStatus('saving');setRejectMsg('Sende Zurückspielung…');
     try{
       const res=await apiCall('POST','/update-status',{
-        draft_id:entwurfId,
-        new_status:'entwurf',
+        draft_id:targetId,
+        new_status:'zurueckgespielt',
         user_id:currentUserId,
         role:role,
         reject_comment:cmt
@@ -2085,11 +2068,14 @@ function App(){
         setRejectStatus('error');setRejectMsg('Fehler: '+(res.error||'unbekannt'));
         return;
       }
-      // Lokalen State anpassen — Read-only löst sich auf, Reject-Banner erscheint im Trip-Tab.
-      setTripStatus('entwurf');
-      setRejectComment(cmt);
-      setRejectStatus('success');setRejectMsg('Zurückgewiesen. Curator kann jetzt überarbeiten.');
-      setTimeout(()=>{setShowRejectModal(false);setRejectStatus(null);setRejectMsg('');},1800);
+      // Lokalen State anpassen — bei offenem Entwurf wird er editierbar, Banner erscheint im Trip-Tab.
+      if(targetId===entwurfId){
+        setTripStatus('zurueckgespielt');
+        setRejectComment(cmt);
+      }
+      setLoadList(prev=>prev.map(d=>d.entwurf_id===targetId?{...d,status:'zurueckgespielt',reject_comment:cmt}:d));
+      setRejectStatus('success');setRejectMsg('Zurückgespielt. Curator kann jetzt überarbeiten.');
+      setTimeout(()=>{setShowRejectModal(false);setRejectStatus(null);setRejectMsg('');setRejectTargetId('');},1800);
     }catch(err){
       setRejectStatus('error');setRejectMsg('Fehler: '+err.message);
     }
@@ -2119,11 +2105,50 @@ function App(){
     setDeletingId('');
   };
 
-  // ============== v0.13: GENERATE-STUB (UI-only, Backend-Call deaktiviert) ==============
-  // Der echte /generate-Endpoint ist Backend-seitig live (status='in_generierung' + Reisen_Roh-Append + WF3-Trigger),
-  // wird aber bewusst noch nicht ausgelöst, bis WF3 produktionsbereit ist und freigegeben wird.
-  // Bis dahin ist der Generieren-Button visuell sichtbar (Position/Platz) aber disabled mit Tooltip.
-  // TODO Stufe 3: Modal + handleGenerate-Funktion mit echtem apiCall('POST','/generate',{draft_id,user_id,role}).
+  // ============== v0.16: FREIGEBEN + GENERIEREN (canManage) ==============
+  const showToast=(kind,msg,ms=5000)=>{setActionToast({kind,msg});setTimeout(()=>setActionToast(null),ms);};
+
+  // Freigeben: uebergeben → freigegeben (curator_master/admin). Wirkt auf offenen Entwurf oder Listenzeile.
+  const approveDraft=async(id,currentStatus)=>{
+    if(!canManage){alert('Freigeben ist Admin/Master vorbehalten.');return;}
+    if(currentStatus!=='uebergeben'){alert('Nur übergebene Reisen können freigegeben werden.');return;}
+    if(!id) return;
+    if(!confirm('Diese Reise freigeben?\n\nNach Freigabe kann sie generiert werden.')) return;
+    setActionBusy(id);
+    try{
+      const res=await apiCall('POST','/update-status',{draft_id:id,new_status:'freigegeben',user_id:currentUserId,role:role});
+      if(res.success===false){
+        showToast('err','Freigabe fehlgeschlagen: '+(res.error||'unbekannt'),8000);
+      }else{
+        if(id===entwurfId){setTripStatus('freigegeben');setRejectComment('');}
+        setLoadList(prev=>prev.map(d=>d.entwurf_id===id?{...d,status:'freigegeben'}:d));
+        showToast('ok','Freigegeben — kann jetzt generiert werden.');
+      }
+    }catch(err){showToast('err','Fehler: '+err.message,8000);}
+    setActionBusy('');
+  };
+
+  // Generieren: freigegeben → in_generierung (curator_master/admin). Backend schreibt die Reisen_Roh-Zeile
+  // (idempotenter Upsert per entwurf_id, vergibt/wiederverwendet reise_id). WF3PDF-Start ist Backend-seitig
+  // noch entkoppelt/aus — kommt später additiv an denselben Endpunkt.
+  const generateDraft=async(id,currentStatus)=>{
+    if(!canManage){alert('Generieren ist Admin/Master vorbehalten.');return;}
+    if(currentStatus!=='freigegeben'){alert('Nur freigegebene Reisen können generiert werden.');return;}
+    if(!id) return;
+    if(!confirm('Generierung jetzt starten?\n\nEs wird die Roh-Zeile geschrieben. Die WP-Veröffentlichung folgt später separat.')) return;
+    setActionBusy(id);
+    try{
+      const res=await apiCall('POST','/generate',{draft_id:id,user_id:currentUserId,role:role});
+      if(res.success===false){
+        showToast('err','Generieren fehlgeschlagen: '+(res.error||'unbekannt'),8000);
+      }else{
+        if(id===entwurfId){setTripStatus('in_generierung');}
+        setLoadList(prev=>prev.map(d=>d.entwurf_id===id?{...d,status:'in_generierung'}:d));
+        showToast('ok','In Generierung'+(res.reise_id?(' — '+res.reise_id):'')+'.');
+      }
+    }catch(err){showToast('err','Fehler: '+err.message,8000);}
+    setActionBusy('');
+  };
 
   // ============== WHISPERER PAYLOAD/SAVE/LOAD ==============
   const buildWhispererPayload=()=>({
@@ -2241,7 +2266,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.15.1 (Emotional Taxonomy)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.16.0 (Freigabe-Strecke)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2252,7 +2277,7 @@ function App(){
           <span style={{fontSize:10,fontWeight:700,color:'var(--white)',background:ROLE_COLORS[role]||'#888',padding:'2px 8px',borderRadius:4,textTransform:'uppercase',letterSpacing:0.5}}>{ROLE_LABELS[role]||role}</span>
           <button onClick={handleLogout} title="Abmelden" style={{background:'transparent',border:'1px solid #D0D0D0',borderRadius:4,padding:'2px 8px',fontSize:11,cursor:'pointer',color:'#666',fontFamily:'inherit'}}>↪ Abmelden</button>
         </div>
-        <div style={{background:'var(--sage)',color:'var(--white)',padding:'6px 14px',borderRadius:6,fontSize:12,fontWeight:700}}>v0.15.1</div>
+        <div style={{background:'var(--sage)',color:'var(--white)',padding:'6px 14px',borderRadius:6,fontSize:12,fontWeight:700}}>v0.14.7</div>
       </div>
     </div>
 
@@ -2518,7 +2543,7 @@ function App(){
           <InsiderField number={1} title="Dein Insider-Wissen zur Gesamtreise" hint="Anreise-Tipps, Straßenempfehlungen, Maut, regionale Besonderheiten (F1). Tagesgenaue Insidertips unter Tagesplanung eintragen." placeholder="AP-7 statt A-7, Siesta beachten, Abendessen nie vor 20h..." value={trip.freitext_gesamtreise} onChange={v=>setT('freitext_gesamtreise',v)}/>
         </Section>
 
-        <Section title="Reiseprofil" icon="🏷️" open={openSections.taxonomie} onToggle={()=>toggleSection('taxonomie')}>
+        <Section title="Taxonomie-Tags" icon="🏷️" open={openSections.taxonomie} onToggle={()=>toggleSection('taxonomie')}>
           <Field label="Reise-Format" badge="PFLICHT" hint="WIE wird gereist?"><Radio options={taxReiseFormat} value={trip.reise_format} onChange={v=>setT('reise_format',v)} name="format"/></Field>
           <Field label="Reise-Thema" badge="PFLICHT" hint="WAS? Bis zu 3 Themen — Reihenfolge zählt: erstes Thema = Hauptthema. Klarer Fokus führt zu besseren Treffern und höherer Auffindbarkeit."><OrderedTagPicker options={taxReiseThema} value={trip.reise_thema} onChange={v=>setT('reise_thema',v.slice(0,3))} max={3}/></Field>
           <Field label="Reise-Art" badge="PFLICHT" hint="WARUM?"><Radio options={taxReiseArt} value={trip.reise_charakter} onChange={v=>setT('reise_charakter',v)} name="charakter"/></Field>
@@ -2931,11 +2956,11 @@ function App(){
             </button>
             <button onClick={handleTransfer} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst speichern':''} style={{background:entwurfId?'var(--coral)':'#CCC',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>→ Übergeben</button>
           </>}
-          {/* v0.13: Reject-Button — sichtbar bei canManage UND status='übergeben'. Öffnet Reject-Modal mit Pflicht-Begründung. */}
-          {canManage&&tripStatus==='übergeben'&&<button onClick={openRejectModal} style={{background:'var(--white)',color:'var(--red)',border:'2px solid var(--red)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>↩ Zurückweisen</button>}
-          {/* v0.13: Generate-Button als deaktivierter Platzhalter (Stufe 3). Position/Platz sichtbar,
-              Klick gesperrt, Tooltip erklärt warum. Aktivierung erfolgt mit WF3-Bereitschaft. */}
-          {canManage&&tripStatus==='übergeben'&&<button disabled title="Generieren wird mit WF3-Produktionsfreigabe aktiviert (kommt in Stufe 3)" style={{background:'#E8E8E8',color:'#999',border:'2px dashed #BBB',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'not-allowed',fontWeight:600,fontFamily:'inherit'}}>⚡ Generieren <span style={{fontSize:9,fontWeight:700,marginLeft:6,padding:'1px 6px',background:'#BBB',color:'var(--white)',borderRadius:3,letterSpacing:0.5}}>BALD</span></button>}
+          {/* v0.16: Master/Admin-Aktionen auf dem geöffneten Entwurf — Gating nach ASCII-Status (Kontrakt WF1 v2). */}
+          {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>approveDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'✓ Freigeben'}</button>}
+          {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>openRejectModal(entwurfId,tripStatus)} style={{background:'var(--white)',color:'var(--red)',border:'2px solid var(--red)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>↩ Zurückspielen</button>}
+          {/* v0.16: Generieren aktiv (vorher Stub). Nur bei freigegeben. Backend schreibt Roh-Zeile; WP-Publish folgt separat. */}
+          {canManage&&tripStatus==='freigegeben'&&<button onClick={()=>generateDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} title="Schreibt die Roh-Zeile. WP-Veröffentlichung (WF3) folgt später separat." style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'⚡ Generieren'}</button>}
         </div>
       </div>}
 
@@ -2954,18 +2979,23 @@ function App(){
             {[
               {k:'alle',label:'Alle'},
               {k:'entwurf',label:'Entwurf'},
-              {k:'rejected',label:'Zurückgewiesen'},
-              {k:'übergeben',label:'Übergeben'},
+              {k:'zurueckgespielt',label:'Zurückgespielt'},
+              {k:'uebergeben',label:'Übergeben'},
+              {k:'freigegeben',label:'Freigegeben'},
               {k:'in_generierung',label:'In Generierung'},
-              {k:'veröffentlicht',label:'Veröffentlicht'},
+              {k:'veroeffentlicht',label:'Veröffentlicht'},
               {k:'fehler',label:'Fehler'}
             ].map(t=>{
               // Zähler pro Tab — gibt dem Master ein Gefühl für seine Inbox.
-              // v0.13.1: 'rejected' ist Pseudo-Status für Reisen mit Status entwurf/draft + nicht-leerem reject_comment.
+              // v0.16: 'zurueckgespielt' = echter Status; Altzeilen (entwurf/draft + reject_comment) zählen mit.
+              // Umlaut-Altwerte ('übergeben'/'veröffentlicht') werden auf die ASCII-Tabs gemappt.
               const cnt=t.k==='alle'?loadList.length:loadList.filter(d=>{
                 const s=d.status||'entwurf';
-                if(t.k==='rejected') return (s==='entwurf'||s==='draft')&&!!(d.reject_comment&&String(d.reject_comment).trim());
-                if(t.k==='entwurf') return (s==='entwurf'||s==='draft')&&!(d.reject_comment&&String(d.reject_comment).trim());
+                const hasReject=!!(d.reject_comment&&String(d.reject_comment).trim());
+                if(t.k==='zurueckgespielt') return s==='zurueckgespielt'||((s==='entwurf'||s==='draft')&&hasReject);
+                if(t.k==='entwurf') return (s==='entwurf'||s==='draft')&&!hasReject;
+                if(t.k==='uebergeben') return s==='uebergeben'||s==='übergeben';
+                if(t.k==='veroeffentlicht') return s==='veroeffentlicht'||s==='veröffentlicht';
                 return s===t.k;
               }).length;
               const active=loadFilter===t.k;
@@ -2980,14 +3010,16 @@ function App(){
             {!loadListLoading&&loadListError&&<div style={{padding:16,background:'#FFEBEE',color:'#D32F2F',borderRadius:8,fontSize:13}}>Fehler: {loadListError}</div>}
             {!loadListLoading&&!loadListError&&loadList.length===0&&<div style={{textAlign:'center',padding:40,color:'#888',fontSize:13}}>Keine Reisen vorhanden. Lege über das Formular eine neue Reise an und klicke „Speichern".</div>}
             {!loadListLoading&&!loadListError&&loadList.length>0&&(()=>{
-              // v0.13: Filterung nach Status-Tab (nur canManage hat Tabs aktiv).
-              // v0.13.1: 'rejected' = entwurf/draft mit reject_comment; 'entwurf' = entwurf/draft OHNE reject_comment.
+              // v0.16: Filter nach ASCII-Status (nur canManage hat Tabs aktiv).
+              // 'zurueckgespielt' = echter Status oder Altzeile (entwurf/draft + reject_comment); 'entwurf' = ohne reject_comment.
               const filtered=loadList.filter(d=>{
                 if(!canManage||loadFilter==='alle') return true;
                 const s=d.status||'entwurf';
                 const hasReject=!!(d.reject_comment&&String(d.reject_comment).trim());
-                if(loadFilter==='rejected') return (s==='entwurf'||s==='draft')&&hasReject;
+                if(loadFilter==='zurueckgespielt') return s==='zurueckgespielt'||((s==='entwurf'||s==='draft')&&hasReject);
                 if(loadFilter==='entwurf') return (s==='entwurf'||s==='draft')&&!hasReject;
+                if(loadFilter==='uebergeben') return s==='uebergeben'||s==='übergeben';
+                if(loadFilter==='veroeffentlicht') return s==='veroeffentlicht'||s==='veröffentlicht';
                 return s===loadFilter;
               });
               if(filtered.length===0) return <div style={{textAlign:'center',padding:40,color:'#888',fontSize:13}}>Keine Reisen im Filter „{loadFilter}".</div>;
@@ -2998,15 +3030,15 @@ function App(){
                   const updated=d.updated_at?new Date(d.updated_at).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
                   const stat=d.status||'entwurf';
                   const isDeleting=deletingId===d.entwurf_id;
-                  // v0.13.1: Reject-Markierung — gilt nur, wenn Status entwurf/draft IST und reject_comment NICHT leer ist.
+                  // v0.16: Rework-Markierung — echter Status 'zurueckgespielt' ODER Altzeile (entwurf/draft + reject_comment).
                   const rejectCmt=d.reject_comment&&String(d.reject_comment).trim()?String(d.reject_comment).trim():'';
-                  const isRejected=(stat==='entwurf'||stat==='draft')&&rejectCmt;
+                  const isRejected=stat==='zurueckgespielt'||((stat==='entwurf'||stat==='draft')&&rejectCmt);
                   return <div key={d.entwurf_id} style={{background:d.entwurf_id===entwurfId?'var(--sage-light)':isRejected?'#FDECEA':'var(--beige-light)',border:'1px solid '+(d.entwurf_id===entwurfId?'var(--sage)':isRejected?'var(--red)':'#E0E0E0'),borderRadius:8,padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,flexWrap:'wrap',opacity:isDeleting?0.5:1,transition:'opacity 0.2s'}}>
                     <button onClick={()=>pickDraftFromList(d.entwurf_id)} disabled={isDeleting} style={{flex:1,minWidth:200,textAlign:'left',background:'transparent',border:'none',padding:0,cursor:isDeleting?'wait':'pointer',fontFamily:'inherit',color:'var(--anthrazit)'}}>
                       <div style={{fontSize:14,fontWeight:600,color:'var(--anthrazit)',marginBottom:4,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                         <span>{ort}</span>
                         {/* v0.13.1: Reject-Markierung im Titel */}
-                        {isRejected&&<span title={rejectCmt} style={{display:'inline-flex',alignItems:'center',gap:4,padding:'2px 8px',background:'var(--red)',color:'var(--white)',borderRadius:3,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase'}}>↩ Zurückgewiesen</span>}
+                        {isRejected&&<span title={rejectCmt} style={{display:'inline-flex',alignItems:'center',gap:4,padding:'2px 8px',background:'var(--red)',color:'var(--white)',borderRadius:3,fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase'}}>↩ Zurückgespielt</span>}
                       </div>
                       <div style={{fontSize:11,color:'#666',display:'flex',gap:10,flexWrap:'wrap'}}>
                         <span>📅 {tage} Tage</span>
@@ -3025,6 +3057,10 @@ function App(){
                         <span style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:STATUS_COLORS[stat]||'#888'}}></span>
                         {STATUS_LABELS[stat]||stat}
                       </span>
+                      {/* v0.16: Inline-Freigabe-Aktionen pro Zeile (nur canManage), Gating nach ASCII-Status. */}
+                      {canManage&&stat==='uebergeben'&&<button onClick={()=>approveDraft(d.entwurf_id,stat)} disabled={actionBusy===d.entwurf_id} title="Freigeben" style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:actionBusy===d.entwurf_id?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===d.entwurf_id?'…':'✓ Freigeben'}</button>}
+                      {canManage&&stat==='uebergeben'&&<button onClick={()=>openRejectModal(d.entwurf_id,stat)} title="Zurückspielen" style={{background:'var(--white)',color:'var(--red)',border:'1px solid var(--red)',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>↩ Zurück</button>}
+                      {canManage&&stat==='freigegeben'&&<button onClick={()=>generateDraft(d.entwurf_id,stat)} disabled={actionBusy===d.entwurf_id} title="Generieren (schreibt Roh-Zeile; WP-Publish folgt später)" style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:actionBusy===d.entwurf_id?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===d.entwurf_id?'…':'⚡ Gen.'}</button>}
                       {/* v0.13: Löschen-Button nur für canManage. Backend-side gilt: veröffentlicht nur Admin. */}
                       {canManage&&<button onClick={()=>handleDeleteDraft(d.entwurf_id)} disabled={isDeleting} title="Entwurf löschen (Soft-Delete)" style={{background:'transparent',border:'1px solid var(--red)',color:'var(--red)',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:isDeleting?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{isDeleting?'…':'🗑'}</button>}
                     </div>
@@ -3041,8 +3077,8 @@ function App(){
         <div onClick={e=>e.stopPropagation()} style={{background:'var(--white)',borderRadius:12,maxWidth:560,width:'100%',display:'flex',flexDirection:'column',boxShadow:'0 10px 40px rgba(0,0,0,0.2)'}}>
           <div style={{padding:'16px 20px',borderBottom:'2px solid var(--red)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <div>
-              <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:20,color:'var(--red)',fontWeight:700}}>↩ Entwurf zurückweisen</div>
-              <div style={{fontSize:12,color:'#888',marginTop:2}}>Curator erhält die Reise wieder im Status „Entwurf"</div>
+              <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:20,color:'var(--red)',fontWeight:700}}>↩ Entwurf zurückspielen</div>
+              <div style={{fontSize:12,color:'#888',marginTop:2}}>Curator erhält die Reise im Status „Zurückgespielt" zurück und kann sie überarbeiten</div>
             </div>
             <button onClick={closeRejectModal} disabled={rejectStatus==='saving'} title="Abbrechen" style={{background:'transparent',border:'1px solid #D0D0D0',borderRadius:6,padding:'6px 12px',fontSize:13,cursor:rejectStatus==='saving'?'wait':'pointer',color:'#666',fontFamily:'inherit'}}>✕</button>
           </div>
@@ -3062,7 +3098,7 @@ function App(){
           </div>
           <div style={{padding:'12px 20px',borderTop:'1px solid #E8E8E8',display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap'}}>
             <button onClick={closeRejectModal} disabled={rejectStatus==='saving'} style={{background:'var(--white)',color:'#666',border:'1px solid #D0D0D0',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:rejectStatus==='saving'?'wait':'pointer',fontWeight:500,fontFamily:'inherit'}}>Abbrechen</button>
-            <button onClick={submitReject} disabled={rejectStatus==='saving'||!rejectInput.trim()} style={{background:rejectInput.trim()&&rejectStatus!=='saving'?'var(--red)':'#CCC',color:'var(--white)',border:'none',padding:'10px 22px',borderRadius:8,fontSize:14,cursor:rejectInput.trim()&&rejectStatus!=='saving'?'pointer':'not-allowed',fontWeight:600,fontFamily:'inherit'}}>↩ Zurückweisen</button>
+            <button onClick={submitReject} disabled={rejectStatus==='saving'||!rejectInput.trim()} style={{background:rejectInput.trim()&&rejectStatus!=='saving'?'var(--red)':'#CCC',color:'var(--white)',border:'none',padding:'10px 22px',borderRadius:8,fontSize:14,cursor:rejectInput.trim()&&rejectStatus!=='saving'?'pointer':'not-allowed',fontWeight:600,fontFamily:'inherit'}}>↩ Zurückspielen</button>
           </div>
         </div>
       </div>}
@@ -3104,6 +3140,10 @@ function App(){
       </div>}
       {analyseStatus==='error'&&<div style={{position:'fixed',top:20,right:20,background:'#FFEBEE',border:'1px solid var(--red)',borderRadius:8,padding:'12px 18px',boxShadow:'0 4px 16px rgba(0,0,0,0.1)',zIndex:1300,fontSize:13,color:'var(--red)'}}>
         ⚠ {analyseMsg||'Analyse-Fehler.'}
+      </div>}
+      {/* v0.16: Toast für Freigeben/Generieren (versetzt, damit er den Analyse-Toast nicht überdeckt). */}
+      {actionToast&&<div style={{position:'fixed',top:70,right:20,background:actionToast.kind==='ok'?'#E8F5E9':'#FFEBEE',border:'1px solid '+(actionToast.kind==='ok'?'#6B8E5A':'var(--red)'),borderRadius:8,padding:'12px 18px',boxShadow:'0 4px 16px rgba(0,0,0,0.1)',zIndex:1300,fontSize:13,color:actionToast.kind==='ok'?'#2E7D32':'var(--red)'}}>
+        {actionToast.kind==='ok'?'✓ ':'⚠ '}{actionToast.msg}
       </div>}
     </div>
   </div>;
