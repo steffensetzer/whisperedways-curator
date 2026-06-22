@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.16.0 (Freigabe-Strecke)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.16.1 (Freigabe-Strecke)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1803,11 +1803,8 @@ function App(){
       anzahl_tage:parseInt(trip.anzahl_tage)||0,
       zielgruppen_alter:'',positionierung:'',
       unterkunft_global:trip.hotels[0]?.name||'',
-      phrasen_vermeidung:'',faq_seeds:'',
+      faq_seeds:'',
       image_source_priority:'unsplash',
-      wortgrenze_einleitung:250,wortgrenze_normaltag:150,
-      wortgrenze_anreisetag:100,wortgrenze_abreisetag:100,
-      wortgrenze_freier_tag:100,wortgrenze_fazit:150,
       tage:tage.map(t=>({
         tag_nummer:String(t.tag_nummer),
         tag_ort:t.tag_titel||'',
@@ -2266,7 +2263,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.16.0 (Freigabe-Strecke)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.16.1 (Freigabe-Strecke)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
