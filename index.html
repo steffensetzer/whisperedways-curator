@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.16.1 (Freigabe-Strecke)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.17.0 (Admin-Tab + Bildquelle)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -246,6 +246,55 @@ function Slider({labels,value=3,onChange,dim}){
   // Der dim-Parameter bleibt in der Signatur, wird aber nicht mehr gerendert,
   // damit alle bestehenden <Slider dim="…"/>-Aufrufer ungebrochen weiterlaufen.
   return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>{labels.map((l,i)=><span key={i} style={{fontSize:10,color:value===i+1?'var(--coral)':'#AAA',fontWeight:value===i+1?700:400,textAlign:'center',flex:1}}>{l}</span>)}</div><input type="range" min={1} max={5} value={value} onChange={e=>onChange(Number(e.target.value))} style={{width:'100%'}}/></div>;
+}
+
+// ===================== v0.17.0: WORTBUDGET-KONTRAKT (Admin-Tab) =====================
+// Feldkontrakt c→b (WW_c-an-b_AdminTab-Feldkontrakt_config-wortbudget, L-WW-67 §2, „volles Hybrid").
+// Fixer Schlüsselsatz: 10 Tagtypen + 3 Zuschläge + deckel_tag/einleitung/fazit. Werte ganzzahlig ≥ 0.
+const WB_TAGTYPEN=['anreisetag','abreisetag','transfertag','freier_tag','meertag','normaltag','stadttag','ausflugstag','strandtag','wellnesstag'];
+const WB_ZUSCHLAG=['stopp','restaurant','aktivitaet'];
+const WB_TAGTYP_LABEL={anreisetag:'Anreisetag',abreisetag:'Abreisetag',transfertag:'Transfertag',freier_tag:'Freier Tag',meertag:'Meertag',normaltag:'Normaltag',stadttag:'Stadttag',ausflugstag:'Ausflugstag',strandtag:'Strandtag',wellnesstag:'Wellnesstag'};
+const WB_ZUSCHLAG_LABEL={stopp:'Stopp',restaurant:'Restaurant',aktivitaet:'Aktivität'};
+const WB_DEFAULT={deckel_tag:900,basis_pro_tagtyp:{anreisetag:200,abreisetag:150,transfertag:150,freier_tag:200,meertag:200,normaltag:350,stadttag:350,ausflugstag:350,strandtag:200,wellnesstag:200},zuschlag_pro_block:{stopp:60,restaurant:50,aktivitaet:70},einleitung:300,fazit:250};
+// Baut aus beliebiger Eingabe ein kanonisch geordnetes Objekt mit exakt dem erlaubten Schlüsselsatz
+// (fehlende Schlüssel → Default-Wert). Verhindert Extra-/Fehl-Schlüssel im POST-Body.
+function wbCanonical(src){
+  const s=src||{};
+  const toInt=(v,d)=>{const n=Number(v);return Number.isFinite(n)?Math.trunc(n):d;};
+  const basisSrc=s.basis_pro_tagtyp||{};
+  const zuschlagSrc=s.zuschlag_pro_block||{};
+  const basis={};WB_TAGTYPEN.forEach(k=>{basis[k]=toInt(basisSrc[k],WB_DEFAULT.basis_pro_tagtyp[k]);});
+  const zuschlag={};WB_ZUSCHLAG.forEach(k=>{zuschlag[k]=toInt(zuschlagSrc[k],WB_DEFAULT.zuschlag_pro_block[k]);});
+  return {
+    deckel_tag:toInt(s.deckel_tag,WB_DEFAULT.deckel_tag),
+    basis_pro_tagtyp:basis,
+    zuschlag_pro_block:zuschlag,
+    einleitung:toInt(s.einleitung,WB_DEFAULT.einleitung),
+    fazit:toInt(s.fazit,WB_DEFAULT.fazit)
+  };
+}
+// Client-Validierung als Spiegel der Server-Regeln. Liefert {ok, error}.
+function wbValidate(wb){
+  const isNonNegInt=v=>Number.isInteger(v)&&v>=0;
+  if(!isNonNegInt(wb.deckel_tag)) return {ok:false,error:'deckel_tag muss eine ganze Zahl ≥ 0 sein.'};
+  if(!isNonNegInt(wb.einleitung)) return {ok:false,error:'einleitung muss eine ganze Zahl ≥ 0 sein.'};
+  if(!isNonNegInt(wb.fazit)) return {ok:false,error:'fazit muss eine ganze Zahl ≥ 0 sein.'};
+  const bKeys=Object.keys(wb.basis_pro_tagtyp||{});
+  if(bKeys.length!==WB_TAGTYPEN.length||!WB_TAGTYPEN.every(k=>bKeys.includes(k)))
+    return {ok:false,error:'basis_pro_tagtyp muss genau die 10 erlaubten Tagtypen enthalten.'};
+  for(const k of WB_TAGTYPEN) if(!isNonNegInt(wb.basis_pro_tagtyp[k])) return {ok:false,error:`Basis „${WB_TAGTYP_LABEL[k]}" muss eine ganze Zahl ≥ 0 sein.`};
+  const zKeys=Object.keys(wb.zuschlag_pro_block||{});
+  if(zKeys.length!==WB_ZUSCHLAG.length||!WB_ZUSCHLAG.every(k=>zKeys.includes(k)))
+    return {ok:false,error:'zuschlag_pro_block muss genau die 3 erlaubten Blöcke enthalten.'};
+  for(const k of WB_ZUSCHLAG) if(!isNonNegInt(wb.zuschlag_pro_block[k])) return {ok:false,error:`Zuschlag „${WB_ZUSCHLAG_LABEL[k]}" muss eine ganze Zahl ≥ 0 sein.`};
+  return {ok:true,error:''};
+}
+// Weiche deckel_tag-Warnung (nur Hinweis, kein Block): höchster Basiswert + je 1× alle Zuschläge.
+function wbDeckelWarn(wb){
+  const maxBasis=Math.max(...WB_TAGTYPEN.map(k=>Number(wb.basis_pro_tagtyp[k])||0));
+  const sumZuschlag=WB_ZUSCHLAG.reduce((s,k)=>s+(Number(wb.zuschlag_pro_block[k])||0),0);
+  const plausibel=maxBasis+sumZuschlag;
+  return (Number(wb.deckel_tag)||0)<plausibel ? plausibel : 0;
 }
 
 // ===================== v0.14.7: ORDERED TAG PICKER =====================
@@ -846,6 +895,11 @@ function App(){
   const[rejectTargetId,setRejectTargetId]=useState('');
   const[actionBusy,setActionBusy]=useState('');   // entwurf_id, der gerade verarbeitet wird
   const[actionToast,setActionToast]=useState(null); // {kind:'ok'|'err',msg}
+  // === v0.17.0: Admin-Tab — globaler Wortbudget-Default (L-WW-67 §2) ===
+  const[wortbudget,setWortbudget]=useState(()=>wbCanonical(WB_DEFAULT));
+  const[wbLoaded,setWbLoaded]=useState(false);     // GET /config-wortbudget einmal geholt?
+  const[wbStatus,setWbStatus]=useState(null);      // 'loading'|'saving'|'ok'|'err'
+  const[wbMsg,setWbMsg]=useState('');
 
   // Bootstrap
   const[taxonomien,setTaxonomien]=useState({});
@@ -868,6 +922,8 @@ function App(){
     reise_format:'', reise_thema:[], reise_charakter:'',
     zielgruppe:[], tier:['pdf'], aktivitaets_level:'',
     mietwagen:'', mietwagen_details:'', flughafen_empfehlung:'',
+    // v0.17.0: Bildquelle pro Reise (Enum unsplash/adobe). Editierbar nur admin/curator_master.
+    image_source_priority:'unsplash',
     freitext_gesamtreise:'', persoenliche_erfahrung:'', magic_moment:'', sicherheitshinweise:'',
     trust_signale:[], empfohlene_monate:{},
     match: {pre_curation:3, pace:3, solitude_social:3, comfort:3, cultural_depth:3, activity_mode:3, authenticity:3},
@@ -1391,7 +1447,9 @@ function App(){
         emo_international:d.emo_international===true||d.emo_international==='true'||d.emo_international===1||d.emo_international==='1',
         emo_persoenlichkeitsfit:safeJson(d.emo_persoenlichkeitsfit,p.emo_persoenlichkeitsfit),
         emotional_tags_json:d.emotional_tags_json||'',
-        analyse_emotional_at:d.analyse_emotional_at||''
+        analyse_emotional_at:d.analyse_emotional_at||'',
+        // v0.17.0: Bildquelle aus Draft übernehmen (Default unsplash, falls leer)
+        image_source_priority:d.image_source_priority||p.image_source_priority||'unsplash'
       };
     });
     if(Array.isArray(params.tage)&&params.tage.length){
@@ -1804,7 +1862,7 @@ function App(){
       zielgruppen_alter:'',positionierung:'',
       unterkunft_global:trip.hotels[0]?.name||'',
       faq_seeds:'',
-      image_source_priority:'unsplash',
+      image_source_priority:(trip.image_source_priority||'unsplash'),
       tage:tage.map(t=>({
         tag_nummer:String(t.tag_nummer),
         tag_ort:t.tag_titel||'',
@@ -1861,7 +1919,7 @@ function App(){
       taxonomien:taxonomienOut,
       mit_kindern:false,
       hotel_ids:JSON.stringify(trip.hotels.filter(h=>h.hotel_id).map(h=>h.hotel_id)),
-      image_source_priority:'unsplash',
+      image_source_priority:(trip.image_source_priority||'unsplash'),
       user_id:currentUserId,
       user_name:currentUserName,
       whisperer_id:currentUserId,
@@ -2147,6 +2205,53 @@ function App(){
     setActionBusy('');
   };
 
+  // ============== v0.17.0: WORTBUDGET-DEFAULT (Admin-Tab, canManage) ==============
+  // GET/POST gegen WF1-Webhook-Host (apiBase) via apiCall — derselbe Auth-Header wie /update-status,/generate.
+  const setWbTop=(key,val)=>setWortbudget(p=>({...p,[key]:val}));
+  const setWbBasis=(key,val)=>setWortbudget(p=>({...p,basis_pro_tagtyp:{...p.basis_pro_tagtyp,[key]:val}}));
+  const setWbZuschlag=(key,val)=>setWortbudget(p=>({...p,zuschlag_pro_block:{...p.zuschlag_pro_block,[key]:val}}));
+
+  const loadWortbudget=useCallback(async()=>{
+    setWbStatus('loading');setWbMsg('Lade Wortbudget-Default…');
+    try{
+      const res=await apiCall('GET','/config-wortbudget');
+      // b wertet success aus, nicht den HTTP-Status (Brief §3).
+      if(res&&res.success&&res.wortbudget_json){
+        setWortbudget(wbCanonical(res.wortbudget_json));
+        setWbStatus('ok');setWbMsg('Default geladen.');
+      }else{
+        setWbStatus('err');setWbMsg('Konnte Default nicht laden ('+((res&&res.error)||'unerwartete Antwort')+') — zeige lokalen Standard.');
+      }
+    }catch(err){
+      setWbStatus('err');setWbMsg('Ladefehler: '+err.message+' — zeige lokalen Standard.');
+    }
+    setWbLoaded(true);
+  },[apiCall]);
+
+  const saveWortbudget=useCallback(async()=>{
+    if(!canManage){showToast('err','Speichern ist Admin/Master vorbehalten.',8000);return;}
+    const canon=wbCanonical(wortbudget);          // exakter, kanonisch geordneter Schlüsselsatz
+    const v=wbValidate(canon);                     // Client-Spiegel der Server-Regeln
+    if(!v.ok){setWbStatus('err');setWbMsg('Validierung: '+v.error);return;}
+    setWbStatus('saving');setWbMsg('Speichere Wortbudget-Default…');
+    try{
+      const res=await apiCall('POST','/config-wortbudget-save',{role:role,wortbudget:canon});
+      if(res&&res.success){
+        if(res.wortbudget_json) setWortbudget(wbCanonical(res.wortbudget_json));
+        setWbStatus('ok');setWbMsg('Gespeichert.');
+      }else{
+        setWbStatus('err');setWbMsg('Speichern abgelehnt: '+((res&&res.error)||'unbekannt'));
+      }
+    }catch(err){
+      setWbStatus('err');setWbMsg('Speicherfehler: '+err.message);
+    }
+  },[apiCall,canManage,role,wortbudget]);
+
+  // Beim ersten Öffnen des Admin-Tabs den globalen Default holen (sobald Auth steht).
+  useEffect(()=>{
+    if(tab==='admin'&&canManage&&!wbLoaded&&authHeaderValue){ loadWortbudget(); }
+  },[tab,canManage,wbLoaded,authHeaderValue,loadWortbudget]);
+
   // ============== WHISPERER PAYLOAD/SAVE/LOAD ==============
   const buildWhispererPayload=()=>({
     whisperer_id:whisperer.whisperer_id||'',
@@ -2251,7 +2356,7 @@ function App(){
   // weil das Admin-Config-Panel einen "Modus: JSON-Vorschau"-Schalter hat, der den
   // Save-Handler in den JSON-Vorschau-Modus zwingt. Dieser Pfad ist Admin-only und
   // verlässt die Vorschau über den "← Zurück zum Formular"-Button im JSON-View.
-  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'}];
+  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'},...(canManage?[{id:'admin',label:'Admin',icon:'⚙️'}]:[])];
 
   // Render-Gate: ohne eingeloggten User wird der Login-Screen gezeigt, App-UI bleibt verborgen.
   if(!currentUser){
@@ -2263,7 +2368,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.16.1 (Freigabe-Strecke)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.17.0 (Admin-Tab + Bildquelle)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2503,6 +2608,18 @@ function App(){
         </Section>
 
         <Section title="Logistik & Hotels" icon="🚗" open={openSections.logistik} onToggle={()=>toggleSection('logistik')}>
+          {/* v0.17.0: Bildquelle pro Reise. Editierbar nur admin/curator_master; sonst read-only-Anzeige. */}
+          <Field label="Bildquelle (Generierung)" badge={canManage?'ADMIN':'INFO'} hint={canManage?'Bestimmt die Bildquelle für die Generierung dieser Reise.':'Wird von Admin/Master gesetzt.'}>
+            <Radio
+              name="image_source_priority"
+              value={trip.image_source_priority||'unsplash'}
+              onChange={v=>setT('image_source_priority',v)}
+              options={[
+                {value:'unsplash',label:'Unsplash',disabled:!canManage},
+                {value:'adobe',label:'Adobe Stock',disabled:!canManage}
+              ]}
+            />
+          </Field>
           <Field label="Mietwagen" badge="EMPFOHLEN" hint="Tagesgenaue Empfehlung unter Tagesplanung eintragen."><Radio options={[{value:'unverzichtbar',label:'Unverzichtbar'},{value:'empfohlen',label:'Empfohlen'},{value:'teilweise',label:'Teilweise'},{value:'nicht_noetig',label:'Nicht nötig'},{value:'oepnv',label:'ÖPNV besser'}]} value={trip.mietwagen} onChange={v=>setT('mietwagen',v)} name="mietwagen"/></Field>
           {trip.mietwagen&&<Field label="Mietwagen-Details" badge="OPTIONAL"><TI placeholder="Direkt am Flughafen, Automatik empfehlen..." value={trip.mietwagen_details} onChange={v=>setT('mietwagen_details',v)}/></Field>}
           <Field label="Empfohlene Flughäfen" badge="EMPFOHLEN" hint="Wenn leer → KI wählt"><TA placeholder="z.B. Jerez (empfohlen, 45min) / Sevilla (1,5h) / Málaga (2,5h)" rows={2} value={trip.flughafen_empfehlung} onChange={v=>setT('flughafen_empfehlung',v)}/></Field>
@@ -2888,6 +3005,73 @@ function App(){
         <div style={{textAlign:'center',marginTop:12}}><button onClick={addTag} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:'pointer'}}>+ Tag hinzufügen</button></div>
         </fieldset>
       </>}
+
+      {/* v0.17.0: ADMIN-TAB — globaler Wortbudget-Default (nur admin/curator_master). */}
+      {!showJson&&tab==='admin'&&canManage&&(()=>{
+        const canon=wbCanonical(wortbudget);
+        const warnTo=wbDeckelWarn(canon);
+        const numStyle={...iStyle,maxWidth:130,textAlign:'right'};
+        const card={background:'var(--beige-light)',border:'1px solid #E0E0E0',borderRadius:8,padding:16,marginBottom:16};
+        const head={fontFamily:"'Playfair Display',Georgia,serif",fontSize:15,color:'var(--sage)',fontWeight:700,marginBottom:10};
+        const numRow=(label,val,on,key)=>(
+          <div key={key||label} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'5px 0',borderBottom:'1px solid #ECECEC'}}>
+            <span style={{fontSize:13,color:'var(--anthrazit)'}}>{label}</span>
+            <input type="number" min={0} step={1} style={numStyle} value={val} onChange={e=>on(e.target.value)}/>
+          </div>
+        );
+        const statusColor=wbStatus==='ok'?'#4CAF50':wbStatus==='err'?'#D32F2F':wbStatus?'#FFC107':'#aaa';
+        return <div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:18,color:'var(--sage)',fontWeight:700}}>⚙️ Wortbudget — globaler Default</div>
+            <div style={{fontSize:12,color:'#777',marginTop:4,lineHeight:1.5}}>
+              Generierungs-Policy (selten geändert). Beim Generieren einer Reise wird dieser Default als Snapshot übernommen.
+              Werte sind Richtwortzahlen pro Abschnitt, ganzzahlig ≥ 0.
+            </div>
+          </div>
+
+          {wbStatus&&<div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14,fontSize:12,color:statusColor}}>
+            <span className="status-dot" style={{background:statusColor}}></span>{wbMsg}
+          </div>}
+
+          <div style={card}>
+            <div style={head}>Globale Abschnitte</div>
+            {numRow('Deckel pro Tag (deckel_tag)',wortbudget.deckel_tag,v=>setWbTop('deckel_tag',v))}
+            {numRow('Einleitung (einleitung)',wortbudget.einleitung,v=>setWbTop('einleitung',v))}
+            {numRow('Fazit (fazit)',wortbudget.fazit,v=>setWbTop('fazit',v))}
+          </div>
+
+          <div style={card}>
+            <div style={head}>Basis pro Tagtyp (10)</div>
+            {WB_TAGTYPEN.map(k=>numRow(WB_TAGTYP_LABEL[k]+' ('+k+')',wortbudget.basis_pro_tagtyp[k],v=>setWbBasis(k,v),k))}
+          </div>
+
+          <div style={card}>
+            <div style={head}>Zuschlag pro Block (3)</div>
+            {WB_ZUSCHLAG.map(k=>numRow(WB_ZUSCHLAG_LABEL[k]+' ('+k+')',wortbudget.zuschlag_pro_block[k],v=>setWbZuschlag(k,v),k))}
+          </div>
+
+          {warnTo>0&&<div style={{background:'#FFF8E1',border:'1px solid #FFE082',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#8A6D00',lineHeight:1.5}}>
+            ⚠️ Hinweis: <code>deckel_tag</code> ({canon.deckel_tag}) liegt unter einem plausiblen Tageswert von ~{warnTo}
+            (höchster Basiswert + je 1× alle Zuschläge). Kein Block — der Deckel kappt höhere Tagesbudgets.
+          </div>}
+
+          <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+            <button onClick={saveWortbudget} disabled={wbStatus==='saving'} style={{background:wbStatus==='saving'?'#aaa':'var(--sage)',color:'var(--white)',border:'none',padding:'10px 22px',borderRadius:8,fontSize:14,cursor:wbStatus==='saving'?'wait':'pointer',fontWeight:600}}>
+              {wbStatus==='saving'?'Speichere…':'💾 Default speichern'}
+            </button>
+            <button onClick={loadWortbudget} disabled={wbStatus==='loading'} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>
+              ↺ Neu laden
+            </button>
+            <button onClick={()=>{setWortbudget(wbCanonical(WB_DEFAULT));setWbStatus(null);setWbMsg('');}} style={{background:'var(--white)',color:'#999',border:'1px solid #D0D0D0',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer'}}>
+              Auf Standard zurücksetzen
+            </button>
+          </div>
+
+          <div style={{marginTop:20,fontSize:11,color:'#999',lineHeight:1.5,borderTop:'1px solid #EEE',paddingTop:12}}>
+            Hinweis: Die <strong>Bildquelle</strong> (<code>image_source_priority</code>) wird pro Reise im Tab „Reise-Eingabe" gesetzt — nicht hier.
+          </div>
+        </div>;
+      })()}
 
       {/* v0.14: Footer ist tab-abhängig — saubere Trennung Whisperer ↔ Reisen.
           Im Whisperer-Tab werden ausschließlich Profil-Aktionen angeboten (Sage-getönt).
