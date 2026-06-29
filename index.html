@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.17.0 (Admin-Tab + Bildquelle)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.0 (Feld-Hilfe i + Kuratorsicht)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -202,7 +202,32 @@ function Badge({type}){
   return <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,background:s.bg,color:s.color,fontWeight:600,whiteSpace:'nowrap',marginLeft:6}}>{s.label}</span>;
 }
 function Section({title,icon,open=true,onToggle,children}){const collapsible=!!onToggle;return <div style={{marginTop:28,marginBottom:16}}><div onClick={onToggle} style={{background:'var(--coral)',color:'var(--white)',padding:'10px 16px',borderRadius:open?'8px 8px 0 0':8,fontFamily:"'Playfair Display',Georgia,serif",fontSize:15,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,cursor:collapsible?'pointer':'default',userSelect:'none'}}><span style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:18}}>{icon}</span>{title}</span>{collapsible&&<span style={{fontSize:14,opacity:0.9}}>{open?'▾':'▸'}</span>}</div>{open&&<div style={{padding:'16px 0 4px 0'}}>{children}</div>}</div>;}
-function Field({label,badge,hint,children,half}){return <div className={half?'field-half':''} style={{marginBottom:16,flex:half?'1 1 calc(50% - 8px)':'1 1 100%',minWidth:half?200:'auto'}}><div style={{marginBottom:4,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4}}><label style={{fontSize:13,fontWeight:600}}>{label}</label>{badge&&<Badge type={badge}/>}</div>{hint&&<div style={{fontSize:11,color:'#888',marginBottom:4}}>{hint}</div>}{children}</div>;}
+// v0.18.0: Whisperer-„i"-Hilfetexte. Inhalt kommt aus Sheet whisperer_i via GET /whisperer-i (Endpoint folgt — Projekt c).
+// Bis dahin (oder bei fehlendem feld_key) zeigt jedes „i" den einheitlichen Fallback. KEIN feldspezifischer Hardcode.
+const WHISPERER_I_FALLBACK='Hilfetext noch nicht verfügbar.';
+const WhispererIContext=React.createContext({});
+function InfoI({feldKey}){
+  const map=React.useContext(WhispererIContext)||{};
+  const[open,setOpen]=useState(false);
+  const entry=map[feldKey];
+  const hasContent=!!(entry&&(entry.was_tun||entry.eingabe||entry.beispiel));
+  const titleText=hasContent?(entry.was_tun||'Erklärung anzeigen'):WHISPERER_I_FALLBACK;
+  return <span style={{position:'relative',display:'inline-flex',verticalAlign:'middle'}}>
+    <button type="button" onClick={e=>{e.preventDefault();setOpen(o=>!o);}} title={titleText} aria-label="Erklärung anzeigen"
+      style={{width:16,height:16,minWidth:16,borderRadius:'50%',border:'1px solid var(--sage)',background:open?'var(--sage)':'var(--white)',color:open?'var(--white)':'var(--sage)',fontSize:11,fontWeight:700,lineHeight:1,cursor:'pointer',padding:0,display:'inline-flex',alignItems:'center',justifyContent:'center',fontFamily:'Georgia,serif'}}>i</button>
+    {open&&<>
+      <div onClick={()=>setOpen(false)} style={{position:'fixed',inset:0,zIndex:1399}}></div>
+      <div style={{position:'absolute',top:22,left:0,zIndex:1400,width:280,maxWidth:'80vw',background:'var(--white)',border:'1px solid var(--sage-light)',borderRadius:8,boxShadow:'0 6px 24px rgba(0,0,0,0.15)',padding:'12px 14px',fontSize:12,lineHeight:1.5,color:'var(--anthrazit)',textAlign:'left',fontWeight:400,cursor:'auto'}} onClick={e=>e.stopPropagation()}>
+        {hasContent?<>
+          {entry.was_tun&&<div style={{marginBottom:6}}>{entry.was_tun}</div>}
+          {entry.eingabe&&<div style={{marginBottom:6}}><strong style={{color:'var(--sage-dark)'}}>Eingabe:</strong> {entry.eingabe}</div>}
+          {entry.beispiel&&<div style={{color:'#666',fontStyle:'italic'}}><strong style={{fontStyle:'normal',color:'var(--sage-dark)'}}>Beispiel:</strong> {entry.beispiel}</div>}
+        </>:<div style={{color:'#888',fontStyle:'italic'}}>{WHISPERER_I_FALLBACK}</div>}
+      </div>
+    </>}
+  </span>;
+}
+function Field({label,badge,hint,children,half,info}){return <div className={half?'field-half':''} style={{marginBottom:16,flex:half?'1 1 calc(50% - 8px)':'1 1 100%',minWidth:half?200:'auto'}}><div style={{marginBottom:4,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4}}><label style={{fontSize:13,fontWeight:600}}>{label}</label>{badge&&<Badge type={badge}/>}{info&&<InfoI feldKey={info}/>}</div>{hint&&<div style={{fontSize:11,color:'#888',marginBottom:4}}>{hint}</div>}{children}</div>;}
 
 function TI({placeholder,value,onChange}){return <input style={iStyle} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
 function TA({placeholder,rows=3,value,onChange}){return <textarea style={{...iStyle,resize:'vertical'}} rows={rows} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
@@ -903,6 +928,9 @@ function App(){
 
   // Bootstrap
   const[taxonomien,setTaxonomien]=useState({});
+  // v0.18.0: Hilfetexte für die „i"-Tooltips (Map feld_key → {label,was_tun,eingabe,beispiel}).
+  // Quelle: Sheet whisperer_i via /whisperer-i. Leer, bis der Endpoint (Projekt c) liefert → Fallback greift.
+  const[whispererI,setWhispererI]=useState({});
   const[tagesartenList,setTagesartenList]=useState([]);
   const[bootstrap,setBootstrap]=useState({status:'pending',error:''});
 
@@ -1499,11 +1527,24 @@ function App(){
     let cancelled=false;
     (async()=>{
       setBootstrap({status:'pending',error:''});
-      const [tax,ta]=await Promise.all([
+      const [tax,ta,wi]=await Promise.all([
         apiCall('GET','/taxonomien').catch(e=>({error:e.message,terms:[]})),
-        apiCall('GET','/tagesarten').catch(e=>({error:e.message,tagesarten:[]}))
+        apiCall('GET','/tagesarten').catch(e=>({error:e.message,tagesarten:[]})),
+        // v0.18.0: Hilfetexte für „i"-Tooltips. Non-kritisch — Fehler/404 nur still ignorieren,
+        // beeinflusst NICHT den Bootstrap-Status; bei leerem Ergebnis greift der Fallback-String.
+        apiCall('GET','/whisperer-i').catch(e=>({error:e.message,texte:[]}))
       ]);
       if(cancelled) return;
+
+      // v0.18.0: Hilfetexte → Map feld_key → {label,was_tun,eingabe,beispiel}. Tolerant ggü. Array-Schlüssel.
+      const wiRows=(wi&&(wi.texte||wi.items||wi.rows))||[];
+      const wiMap={};
+      wiRows.forEach(r=>{
+        const k=r&&(r.feld_key||r.feldKey||r.key);
+        if(!k) return;
+        wiMap[k]={label:r.label||'',was_tun:r.was_tun||'',eingabe:r.eingabe||'',beispiel:r.beispiel||''};
+      });
+      setWhispererI(wiMap);
 
       const grouped={};
       (tax.terms||[]).forEach(t=>{
@@ -1586,7 +1627,7 @@ function App(){
           if(/Kein Whisperer-Profil/i.test(data.error||'')) return;
           // Andere Backend-Fehler → Hinweis sichtbar machen.
           setWhispererStatus('error');
-          setWhispererMsg('Profil konnte nicht automatisch geladen werden — bitte manuell „📥 Profil laden" klicken.');
+          setWhispererMsg('Profil konnte nicht automatisch geladen werden — '+(canManage?'bitte manuell „📥 Profil laden" klicken.':'bitte Seite neu laden.'));
           setTimeout(()=>setWhispererStatus(null),8000);
           return;
         }
@@ -1597,7 +1638,7 @@ function App(){
       }catch(err){
         if(cancelled) return;
         setWhispererStatus('error');
-        setWhispererMsg('Profil konnte nicht automatisch geladen werden — bitte manuell „📥 Profil laden" klicken.');
+        setWhispererMsg('Profil konnte nicht automatisch geladen werden — '+(canManage?'bitte manuell „📥 Profil laden" klicken.':'bitte Seite neu laden.'));
         setTimeout(()=>setWhispererStatus(null),8000);
         console.warn('Whisperer-Auto-Load fehlgeschlagen:',err.message);
       }finally{
@@ -2363,12 +2404,12 @@ function App(){
     return <LoginScreen apiBase={apiBase} authHeaderName={authHeaderName} authHeaderValue={authHeaderValue} onAuthHeaderValueChange={setAuthHeaderValue} onLogin={handleLogin}/>;
   }
 
-  return <div style={{minHeight:'100vh'}}>
+  return <WhispererIContext.Provider value={whispererI}><div style={{minHeight:'100vh'}}>
     {/* Header */}
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.17.0 (Admin-Tab + Bildquelle)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.0 (Feld-Hilfe i + Kuratorsicht)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2608,18 +2649,6 @@ function App(){
         </Section>
 
         <Section title="Logistik & Hotels" icon="🚗" open={openSections.logistik} onToggle={()=>toggleSection('logistik')}>
-          {/* v0.17.0: Bildquelle pro Reise. Editierbar nur admin/curator_master; sonst read-only-Anzeige. */}
-          <Field label="Bildquelle (Generierung)" badge={canManage?'ADMIN':'INFO'} hint={canManage?'Bestimmt die Bildquelle für die Generierung dieser Reise.':'Wird von Admin/Master gesetzt.'}>
-            <Radio
-              name="image_source_priority"
-              value={trip.image_source_priority||'unsplash'}
-              onChange={v=>setT('image_source_priority',v)}
-              options={[
-                {value:'unsplash',label:'Unsplash',disabled:!canManage},
-                {value:'adobe',label:'Adobe Stock',disabled:!canManage}
-              ]}
-            />
-          </Field>
           <Field label="Mietwagen" badge="EMPFOHLEN" hint="Tagesgenaue Empfehlung unter Tagesplanung eintragen."><Radio options={[{value:'unverzichtbar',label:'Unverzichtbar'},{value:'empfohlen',label:'Empfohlen'},{value:'teilweise',label:'Teilweise'},{value:'nicht_noetig',label:'Nicht nötig'},{value:'oepnv',label:'ÖPNV besser'}]} value={trip.mietwagen} onChange={v=>setT('mietwagen',v)} name="mietwagen"/></Field>
           {trip.mietwagen&&<Field label="Mietwagen-Details" badge="OPTIONAL"><TI placeholder="Direkt am Flughafen, Automatik empfehlen..." value={trip.mietwagen_details} onChange={v=>setT('mietwagen_details',v)}/></Field>}
           <Field label="Empfohlene Flughäfen" badge="EMPFOHLEN" hint="Wenn leer → KI wählt"><TA placeholder="z.B. Jerez (empfohlen, 45min) / Sevilla (1,5h) / Málaga (2,5h)" rows={2} value={trip.flughafen_empfehlung} onChange={v=>setT('flughafen_empfehlung',v)}/></Field>
@@ -2655,6 +2684,18 @@ function App(){
           </Field>
 
           <InsiderField number={1} title="Dein Insider-Wissen zur Gesamtreise" hint="Anreise-Tipps, Straßenempfehlungen, Maut, regionale Besonderheiten (F1). Tagesgenaue Insidertips unter Tagesplanung eintragen." placeholder="AP-7 statt A-7, Siesta beachten, Abendessen nie vor 20h..." value={trip.freitext_gesamtreise} onChange={v=>setT('freitext_gesamtreise',v)}/>
+          {/* v0.18.0: Bildquelle pro Reise — ans Ende des Logistik-Blocks verschoben (unter „Insider-Wissen zur Gesamtreise"). Editierbar nur admin/curator_master; sonst read-only-Anzeige. */}
+          <Field label="Bildquelle (Generierung)" badge={canManage?'ADMIN':'INFO'} hint={canManage?'Bestimmt die Bildquelle für die Generierung dieser Reise.':'Wird von Admin/Master gesetzt.'}>
+            <Radio
+              name="image_source_priority"
+              value={trip.image_source_priority||'unsplash'}
+              onChange={v=>setT('image_source_priority',v)}
+              options={[
+                {value:'unsplash',label:'Unsplash',disabled:!canManage},
+                {value:'adobe',label:'Adobe Stock',disabled:!canManage}
+              ]}
+            />
+          </Field>
         </Section>
 
         <Section title="Taxonomie-Tags" icon="🏷️" open={openSections.taxonomie} onToggle={()=>toggleSection('taxonomie')}>
@@ -2675,18 +2716,18 @@ function App(){
                 Die Match-Dimensionen waren nie wirklich pflichtige Eingaben — sie haben Default-Wert 3 (Mitte),
                 d.h. der Curator konnte sie auch ohne bewusste Eingabe schon "ausfüllen". Das macht die alte
                 Pflicht-Markierung formal sinnlos. EMPFOHLEN ist die ehrlichere Markierung. */}
-            <Field label="Planungsintensität" badge="EMPFOHLEN"><Slider labels={['Offen','Grobgerüst','Tagesstruktur','Stunden-Plan','Minutiös']} value={trip.match.pre_curation} onChange={v=>setMatch('pre_curation',v)} dim="1"/></Field>
-            <Field label="Programmdichte" badge="EMPFOHLEN"><Slider labels={['Sehr ruhig','Entspannt','Ausgewogen','Voll','Intensiv']} value={trip.match.pace} onChange={v=>setMatch('pace',v)} dim="2"/></Field>
-            <Field label="Allein vs. Gesellschaft" badge="EMPFOHLEN"><Slider labels={['Zurückgezogen','Privat','Mix','Sozial','Sehr gesellig']} value={trip.match.solitude_social} onChange={v=>setMatch('solitude_social',v)} dim="3"/></Field>
-            <Field label="Komfort-Niveau" badge="EMPFOHLEN"><Slider labels={['Einfach','Solide','Komfortabel','Premium','Luxus']} value={trip.match.comfort} onChange={v=>setMatch('comfort',v)} dim="4"/></Field>
-            <Field label="Kulturelle Tiefe" badge="EMPFOHLEN"><Slider labels={['Keine','Touch-Points','Solide','Tief','Immersiv']} value={trip.match.cultural_depth} onChange={v=>setMatch('cultural_depth',v)} dim="5"/></Field>
+            <Field label="Planungsintensität" badge="EMPFOHLEN" info="pre_curation"><Slider labels={['Offen','Grobgerüst','Tagesstruktur','Stunden-Plan','Minutiös']} value={trip.match.pre_curation} onChange={v=>setMatch('pre_curation',v)} dim="1"/></Field>
+            <Field label="Programmdichte" badge="EMPFOHLEN" info="pace"><Slider labels={['Sehr ruhig','Entspannt','Ausgewogen','Voll','Intensiv']} value={trip.match.pace} onChange={v=>setMatch('pace',v)} dim="2"/></Field>
+            <Field label="Allein vs. Gesellschaft" badge="EMPFOHLEN" info="solitude_social"><Slider labels={['Zurückgezogen','Privat','Mix','Sozial','Sehr gesellig']} value={trip.match.solitude_social} onChange={v=>setMatch('solitude_social',v)} dim="3"/></Field>
+            <Field label="Komfort-Niveau" badge="EMPFOHLEN" info="comfort"><Slider labels={['Einfach','Solide','Komfortabel','Premium','Luxus']} value={trip.match.comfort} onChange={v=>setMatch('comfort',v)} dim="4"/></Field>
+            <Field label="Kulturelle Tiefe" badge="EMPFOHLEN" info="cultural_depth"><Slider labels={['Keine','Touch-Points','Solide','Tief','Immersiv']} value={trip.match.cultural_depth} onChange={v=>setMatch('cultural_depth',v)} dim="5"/></Field>
             {/* v0.14.1: "Kontemplativ" → "Entspannt" (Plan A3). Field-Label und Slider-Anker beide aktualisiert. */}
-            <Field label="Aktiv vs. Entspannt" badge="EMPFOHLEN"><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
-            <Field label="Insider-Tiefe" badge="EMPFOHLEN"><Slider labels={['Klassisch','Bekannt','Geheimtipp-Mix','Off-the-path','Versteckt']} value={trip.match.authenticity} onChange={v=>setMatch('authenticity',v)} dim="7"/></Field>
+            <Field label="Aktiv vs. Entspannt" badge="EMPFOHLEN" info="activity_mode"><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
+            <Field label="Insider-Tiefe" badge="EMPFOHLEN" info="authenticity"><Slider labels={['Klassisch','Bekannt','Geheimtipp-Mix','Off-the-path','Versteckt']} value={trip.match.authenticity} onChange={v=>setMatch('authenticity',v)} dim="7"/></Field>
             {/* v0.14.1: Trust-Signale-Mehrfachauswahl entfernt, ersetzt durch eine einzelne Checkbox.
                 Datenseitig bleibt das Array trust_signale erhalten (Backend-kompatibel) — es enthält
                 entweder ['beratung_moeglich'] oder []. So bleibt der WF1-Resource-Mapper unverändert. */}
-            <Field label="Individuelles Beratungsgespräch möglich" badge="EMPFOHLEN" hint="Wenn aktiviert, signalisiert das Reisenden, dass sie Fragen vorab persönlich klären können.">
+            <Field label="Individuelles Beratungsgespräch möglich" badge="EMPFOHLEN" info="trust_signale" hint="Wenn aktiviert, signalisiert das Reisenden, dass sie Fragen vorab persönlich klären können.">
               <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'4px 0'}}>
                 <input
                   type="checkbox"
@@ -2705,11 +2746,11 @@ function App(){
               <div style={{fontSize:13,fontWeight:700,color:'var(--sage-dark)',marginBottom:4,fontFamily:"'Playfair Display',Georgia,serif"}}>💛 Emotionaler Charakter — von dir gepflegt</div>
               <div style={{fontSize:11,color:'#888',fontStyle:'italic',marginBottom:14}}>Diese Angaben kann die KI nicht aus deinen Texten ableiten — sie beschreiben die Atmosphäre, die du als Whisperer schaffst.</div>
 
-              <Field label="Tonalität der Begegnungen" badge="EMPFOHLEN" hint="Wie fühlen sich Gespräche und Begegnungen auf deiner Reise an?">
+              <Field label="Tonalität der Begegnungen" badge="EMPFOHLEN" info="emo_tonalitaet" hint="Wie fühlen sich Gespräche und Begegnungen auf deiner Reise an?">
                 <Slider labels={TONALITAET_LABELS} value={trip.emo_tonalitaet} onChange={v=>setT('emo_tonalitaet',v)} dim="EMO1"/>
               </Field>
 
-              <Field label="International / weltoffenes Umfeld" badge="OPTIONAL">
+              <Field label="International / weltoffenes Umfeld" badge="OPTIONAL" info="emo_international">
                 <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'4px 0'}}>
                   <input
                     type="checkbox"
@@ -2720,7 +2761,7 @@ function App(){
                 </label>
               </Field>
 
-              <Field label="Eignet sich besonders für" badge="EMPFOHLEN" hint="Wähle bis zu 3 Personas, die diese Reise besonders anspricht.">
+              <Field label="Eignet sich besonders für" badge="EMPFOHLEN" info="emo_persoenlichkeitsfit" hint="Wähle bis zu 3 Personas, die diese Reise besonders anspricht.">
                 <MC
                   options={VOC_PERSOENLICHKEITSFIT}
                   value={trip.emo_persoenlichkeitsfit}
@@ -2769,7 +2810,7 @@ function App(){
 
             {isAnalysed&&analyseStatus!=='loading'&&(
               <>
-                <Field label="Emotionale Wirkung" badge="KI-VORSCHLAG" hint="Maximal 3 — Reihenfolge zählt. Du kannst Vorschläge bearbeiten.">
+                <Field label="Emotionale Wirkung" badge="KI-VORSCHLAG" info="emotionale_wirkung" hint="Maximal 3 — Reihenfolge zählt. Du kannst Vorschläge bearbeiten.">
                   <MC
                     options={VOC_EMOTIONALE_WIRKUNG}
                     value={Array.isArray(emotionalTags.emotionale_wirkung)?emotionalTags.emotionale_wirkung:[]}
@@ -2778,7 +2819,7 @@ function App(){
                   />
                 </Field>
 
-                <Field label="Mentale Wirkung" badge="KI-VORSCHLAG" hint="Maximal 2.">
+                <Field label="Mentale Wirkung" badge="KI-VORSCHLAG" info="mentale_wirkung" hint="Maximal 2.">
                   <MC
                     options={VOC_MENTALE_WIRKUNG}
                     value={Array.isArray(emotionalTags.mentale_wirkung)?emotionalTags.mentale_wirkung:[]}
@@ -2787,7 +2828,7 @@ function App(){
                   />
                 </Field>
 
-                <Field label="Archetyp — innere Reise-Geschichte" badge="KI-VORSCHLAG">
+                <Field label="Archetyp — innere Reise-Geschichte" badge="KI-VORSCHLAG" info="archetyp">
                   <Radio
                     options={VOC_ARCHETYP}
                     value={emotionalTags.archetyp||''}
@@ -2813,7 +2854,7 @@ function App(){
                 </div>
 
                 <div style={{marginTop:16,textAlign:'center'}}>
-                  <button onClick={()=>runEmotionalAnalysis(false)} disabled={!entwurfId||analyseStatus==='loading'} style={{background:'var(--white)',color:'var(--coral)',border:'1px solid var(--coral)',padding:'8px 18px',borderRadius:6,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>↻ Analyse erneut laufen lassen</button>
+                  <button onClick={()=>{ if(window.confirm('„Erneut laufen lassen" überschreibt emotional_tags_json komplett (frisch aus den Quelltexten gemerged).\n\nManuelle Whisperer-Korrekturen an den Klasse-C-Feldern, die nach der ersten Analyse vorgenommen wurden, gehen dabei verloren — es gibt keinen Merge mit dem bestehenden Tag-Stand.\n\nTrotzdem erneut analysieren?')) runEmotionalAnalysis(false); }} disabled={!entwurfId||analyseStatus==='loading'} style={{background:'var(--white)',color:'var(--coral)',border:'1px solid var(--coral)',padding:'8px 18px',borderRadius:6,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>↻ Analyse erneut laufen lassen</button>
                 </div>
               </>
             )}
@@ -3095,7 +3136,8 @@ function App(){
             title="Nur sichtbar für Admin/Master: User-ID eintippen, um ein fremdes Whisperer-Profil zu laden. Leer lassen für das eigene Profil."
             style={{...iStyle,width:200,padding:'8px 10px',fontSize:12}}
           />}
-          <button onClick={handleWhispererLoad} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>📥 Profil laden</button>
+          {/* v0.18.0 (F6): „Profil laden" nur für canManage (Admin/Master) — der Button ergibt nur Sinn zum Laden eines FREMDEN Profils (eigenes lädt automatisch). Kurator sieht ihn nicht mehr. */}
+          {canManage&&<button onClick={handleWhispererLoad} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>📥 Profil laden</button>}
           <button onClick={handleWhispererSave} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>💾 Profil speichern</button>
         </div>
       </div>}
@@ -3127,14 +3169,8 @@ function App(){
               Bei leerer entwurfId (Bug-#2-Fall: Deep-Link auf nicht-zugreifbare ID) sind beide Buttons disabled. */}
           {isEditableStatus(tripStatus)&&<>
             <button onClick={handleSave} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst eine Reise laden oder neu anlegen':''} style={{background:entwurfId?'var(--white)':'#F0F0F0',color:entwurfId?'var(--sage)':'#999',border:'2px solid '+(entwurfId?'var(--sage)':'#CCC'),padding:'10px 20px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>{'💾 Speichern'}</button>
-            {/* v0.15: Analyse-Button — sichtbar wenn Entwurf existiert und Reise editierbar ist.
-                Triggert manuell den emotionalen Analyse-WF. Beim Klick auf "Übergeben" ohne vorherige
-                Analyse erscheint ein Confirm-Dialog (siehe handleTransfer + showAnalyseConfirm). */}
-            <button onClick={()=>runEmotionalAnalysis(false)} disabled={!entwurfId||analyseStatus==='loading'} title={!entwurfId?'Bitte zuerst speichern':'KI extrahiert emotionale Tags aus deinen Texten'} style={{background:entwurfId?'var(--white)':'#F0F0F0',color:entwurfId?'var(--coral)':'#999',border:'2px solid '+(entwurfId?'var(--coral)':'#CCC'),padding:'10px 18px',borderRadius:8,fontSize:14,cursor:(entwurfId&&analyseStatus!=='loading')?'pointer':'not-allowed',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
-              {analyseStatus==='loading'
-                ? <><span style={{display:'inline-block',width:12,height:12,border:'2px solid rgba(224,122,95,0.3)',borderTopColor:'var(--coral)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite'}}></span>Analyse…</>
-                : <>🤖 {isAnalysed?'Analyse erneut':'Analyse starten'}</>}
-            </button>
+            {/* v0.18.0: Footer-Analyse-Button entfernt — Analyse läuft ausschließlich über die Section „KI-Vorschläge zur emotionalen Wirkung".
+                Der Übergabe-Flow ohne vorherige Analyse (showAnalyseConfirm) bleibt unverändert, er hängt an handleTransfer, nicht an diesem Button. */}
             <button onClick={handleTransfer} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst speichern':''} style={{background:entwurfId?'var(--coral)':'#CCC',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>→ Übergeben</button>
           </>}
           {/* v0.16: Master/Admin-Aktionen auf dem geöffneten Entwurf — Gating nach ASCII-Status (Kontrakt WF1 v2). */}
@@ -3327,7 +3363,7 @@ function App(){
         {actionToast.kind==='ok'?'✓ ':'⚠ '}{actionToast.msg}
       </div>}
     </div>
-  </div>;
+  </div></WhispererIContext.Provider>;
 }
 
 ReactDOM.render(<App/>,document.getElementById('root'));
