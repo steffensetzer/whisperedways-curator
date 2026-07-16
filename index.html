@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.0 (Feld-Hilfe i + Kuratorsicht)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.1 (Sheet-gesteuerte Taxonomien)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1675,15 +1675,13 @@ function App(){
     {value:'suedostasien',label:'Südostasien'},{value:'ostasien',label:'Ostasien'},
     {value:'amerika',label:'Amerika'},{value:'afrika',label:'Afrika'}
   ];
-  // v0.14.1: Reise-Format reduziert auf zwei Werte (Standortreise + Rundreise).
-  // Der Whitelist-Filter sorgt dafür, dass Sheet-Daten mit Alt-Slugs (kreuzfahrt, staedtetrip, expedition, retreat, standort)
-  // hier ignoriert werden. Steffen pflegt das Sheet entsprechend nach.
-  const VALID_REISE_FORMAT=['standortreise','rundreise'];
-  const taxReiseFormatRaw=(taxonomien.reise_format&&taxonomien.reise_format.length)?taxonomien.reise_format:[
+  // v0.18.1: Whitelist entfernt — Sichtbarkeit wird allein über die aktiv-Spalte im
+  // Registry-Sheet (Tab Taxonomien) gesteuert; WF1 liefert nur aktiv=TRUE aus.
+  // Alt-Format-Slugs (kreuzfahrt, staedtetrip, expedition, retreat) stehen dort auf aktiv=FALSE.
+  const taxReiseFormat=(taxonomien.reise_format&&taxonomien.reise_format.length)?taxonomien.reise_format:[
     {value:'standortreise',label:'Standortreise'},
     {value:'rundreise',label:'Rundreise'}
   ];
-  const taxReiseFormat=taxReiseFormatRaw.filter(o=>VALID_REISE_FORMAT.includes(optV(o)));
   const taxReiseThema=(taxonomien.reise_thema&&taxonomien.reise_thema.length)?taxonomien.reise_thema:[
     {value:'kultur-geschichte',label:'Kultur & Geschichte'},
     {value:'natur-landschaft',label:'Natur & Landschaft'},
@@ -1695,9 +1693,8 @@ function App(){
     {value:'strand-meer',label:'Strand & Meer'}
   ];
   // v0.14.1: Reise-Charakter umbenannt zu Reise-Art mit deutschen Slugs.
-  // Werte: erlebnis (Erlebnis-Reise), aktiv (Aktiv-Reise), kulinarik (Kulinarik-Reise), gruppe (Gruppen-Reise, disabled).
-  // Whitelist filtert Sheet-Daten mit Alt-Slugs (cultural-exploration, active-travel, gourmet-lifestyle, community-erlebnis).
-  const VALID_REISE_ART=['erlebnis','aktiv','kulinarik','gruppe'];
+  // v0.18.1: Whitelist entfernt — Sichtbarkeit steuert die aktiv-Spalte im Registry-Sheet.
+  // Alt-EN-Slugs (cultural-exploration, active-travel, gourmet-lifestyle, community-erlebnis) wurden dort gelöscht.
   const taxReiseArtRaw=(taxonomien.reise_charakter&&taxonomien.reise_charakter.length)?taxonomien.reise_charakter:[
     {value:'erlebnis',label:'Erlebnis-Reise'},
     {value:'aktiv',label:'Aktiv-Reise'},
@@ -1705,7 +1702,6 @@ function App(){
     {value:'gruppe',label:'Gruppen-Reise',disabled:true,title:'Gruppen-Reisen sind in Vorbereitung — diese Auswahl wird bald freigeschaltet.'}
   ];
   const taxReiseArt=taxReiseArtRaw
-    .filter(o=>VALID_REISE_ART.includes(optV(o)))
     .map(o=>{
       // Falls "gruppe" aus dem Sheet kommt, ohne disabled-Flag → hier ergänzen.
       if(optV(o)==='gruppe'&&typeof o==='object'&&!o.disabled){
@@ -1713,9 +1709,11 @@ function App(){
       }
       return o;
     });
+  // v0.18.1: Fallback-Werte auf reale WP-Slugs angeglichen (Crossbrief c→b 2026-07-16:
+  // Plural-Formen paare/familien/kleingruppen liefen im WF3PDF-Resolver ins Leere).
   const taxZielgruppe=(taxonomien.zielgruppe&&taxonomien.zielgruppe.length)?taxonomien.zielgruppe:[
-    {value:'solo',label:'Solo-Reisende'},{value:'paare',label:'Paare'},
-    {value:'familien',label:'Familien'},{value:'kleingruppen',label:'Kleingruppen'}
+    {value:'solo',label:'Solo-Reisende'},{value:'paar',label:'Paar'},
+    {value:'familie',label:'Familien'},{value:'gruppe',label:'Kleingruppen'}
   ];
   const taxTierRaw=(taxonomien.tier&&taxonomien.tier.length)?taxonomien.tier:[
     {value:'pdf',label:'PDF (Stufe 1)'},
@@ -2409,7 +2407,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.0 (Feld-Hilfe i + Kuratorsicht)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.1 (Sheet-gesteuerte Taxonomien)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
