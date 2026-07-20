@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.1 (Sheet-gesteuerte Taxonomien)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.2 (Tagesarten 13 + dynamisches Wortbudget)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -273,22 +273,29 @@ function Slider({labels,value=3,onChange,dim}){
   return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>{labels.map((l,i)=><span key={i} style={{fontSize:10,color:value===i+1?'var(--coral)':'#AAA',fontWeight:value===i+1?700:400,textAlign:'center',flex:1}}>{l}</span>)}</div><input type="range" min={1} max={5} value={value} onChange={e=>onChange(Number(e.target.value))} style={{width:'100%'}}/></div>;
 }
 
-// ===================== v0.17.0: WORTBUDGET-KONTRAKT (Admin-Tab) =====================
+// ===================== v0.17.0/v0.18.2: WORTBUDGET-KONTRAKT (Admin-Tab) =====================
 // Feldkontrakt c→b (WW_c-an-b_AdminTab-Feldkontrakt_config-wortbudget, L-WW-67 §2, „volles Hybrid").
-// Fixer Schlüsselsatz: 10 Tagtypen + 3 Zuschläge + deckel_tag/einleitung/fazit. Werte ganzzahlig ≥ 0.
-const WB_TAGTYPEN=['anreisetag','abreisetag','transfertag','freier_tag','meertag','normaltag','stadttag','ausflugstag','strandtag','wellnesstag'];
+// v0.18.2 (L-WW-78): Tagtyp-Schlüsselsatz nicht mehr fix — führend ist der Tagesarten-Tab
+// (tagesartenList zur Laufzeit). Die Konstanten unten sind reiner Fallback (13er-Satz, deckungsgleich
+// mit Wortbudget_Policy Stand 2026-07-20). Zuschläge + deckel_tag/einleitung/fazit bleiben fixes Schema.
+const WB_TAGTYPEN=['anreisetag','abreisetag','transfertag','freier_tag','meertag','normaltag','stadttag','ausflugstag','aktivtag','kulturtag','strandtag','hafentag','wellnesstag'];
 const WB_ZUSCHLAG=['stopp','restaurant','aktivitaet'];
-const WB_TAGTYP_LABEL={anreisetag:'Anreisetag',abreisetag:'Abreisetag',transfertag:'Transfertag',freier_tag:'Freier Tag',meertag:'Meertag',normaltag:'Normaltag',stadttag:'Stadttag',ausflugstag:'Ausflugstag',strandtag:'Strandtag',wellnesstag:'Wellnesstag'};
+const WB_TAGTYP_LABEL={anreisetag:'Anreisetag',abreisetag:'Abreisetag',transfertag:'Transfertag',freier_tag:'Freier Tag',meertag:'Meertag',normaltag:'Normaltag',stadttag:'Stadttag',ausflugstag:'Ausflugstag',aktivtag:'Aktivtag',kulturtag:'Kulturtag',strandtag:'Strandtag',hafentag:'Hafentag',wellnesstag:'Wellnesstag'};
 const WB_ZUSCHLAG_LABEL={stopp:'Stopp',restaurant:'Restaurant',aktivitaet:'Aktivität'};
-const WB_DEFAULT={deckel_tag:900,basis_pro_tagtyp:{anreisetag:200,abreisetag:150,transfertag:150,freier_tag:200,meertag:200,normaltag:350,stadttag:350,ausflugstag:350,strandtag:200,wellnesstag:200},zuschlag_pro_block:{stopp:60,restaurant:50,aktivitaet:70},einleitung:300,fazit:250};
-// Baut aus beliebiger Eingabe ein kanonisch geordnetes Objekt mit exakt dem erlaubten Schlüsselsatz
-// (fehlende Schlüssel → Default-Wert). Verhindert Extra-/Fehl-Schlüssel im POST-Body.
-function wbCanonical(src){
+const WB_BASIS_FALLBACK=200; // Default-Basiswert für Tagtypen ohne hinterlegten Policy-Wert (neue Sheet-Zeilen).
+const WB_DEFAULT={deckel_tag:900,basis_pro_tagtyp:{anreisetag:210,abreisetag:150,transfertag:150,freier_tag:200,meertag:200,normaltag:350,stadttag:350,ausflugstag:350,aktivtag:200,kulturtag:200,strandtag:200,hafentag:200,wellnesstag:200},zuschlag_pro_block:{stopp:60,restaurant:50,aktivitaet:70},einleitung:300,fazit:250};
+// Baut aus beliebiger Eingabe ein kanonisch geordnetes Objekt.
+// v0.18.2: Tagtyp-Schlüsselsatz kommt als Parameter (dynamisch aus tagesartenList; Fallback WB_TAGTYPEN).
+// Fehlende Schlüssel → Default-Wert (WB_DEFAULT bzw. WB_BASIS_FALLBACK für neue Tagtypen).
+// F5=a: verwaiste Keys aus der Quelle (nicht mehr im Tagesarten-Tab) werden ERHALTEN — kein Datenverlust.
+function wbCanonical(src,keys){
   const s=src||{};
+  const tagKeys=(keys&&keys.length)?keys:WB_TAGTYPEN;
   const toInt=(v,d)=>{const n=Number(v);return Number.isFinite(n)?Math.trunc(n):d;};
   const basisSrc=s.basis_pro_tagtyp||{};
   const zuschlagSrc=s.zuschlag_pro_block||{};
-  const basis={};WB_TAGTYPEN.forEach(k=>{basis[k]=toInt(basisSrc[k],WB_DEFAULT.basis_pro_tagtyp[k]);});
+  const basis={};tagKeys.forEach(k=>{const d=WB_DEFAULT.basis_pro_tagtyp[k]!==undefined?WB_DEFAULT.basis_pro_tagtyp[k]:WB_BASIS_FALLBACK;basis[k]=toInt(basisSrc[k],d);});
+  Object.keys(basisSrc).forEach(k=>{if(!(k in basis))basis[k]=toInt(basisSrc[k],WB_BASIS_FALLBACK);});
   const zuschlag={};WB_ZUSCHLAG.forEach(k=>{zuschlag[k]=toInt(zuschlagSrc[k],WB_DEFAULT.zuschlag_pro_block[k]);});
   return {
     deckel_tag:toInt(s.deckel_tag,WB_DEFAULT.deckel_tag),
@@ -299,15 +306,18 @@ function wbCanonical(src){
   };
 }
 // Client-Validierung als Spiegel der Server-Regeln. Liefert {ok, error}.
-function wbValidate(wb){
+// v0.18.2: prüft gegen dynamischen Tagtyp-Satz (Parameter keys); verwaiste Zusatz-Keys sind
+// zulässig (F5=a), müssen aber ebenfalls ganzzahlig ≥ 0 sein.
+function wbValidate(wb,keys){
+  const tagKeys=(keys&&keys.length)?keys:WB_TAGTYPEN;
   const isNonNegInt=v=>Number.isInteger(v)&&v>=0;
   if(!isNonNegInt(wb.deckel_tag)) return {ok:false,error:'deckel_tag muss eine ganze Zahl ≥ 0 sein.'};
   if(!isNonNegInt(wb.einleitung)) return {ok:false,error:'einleitung muss eine ganze Zahl ≥ 0 sein.'};
   if(!isNonNegInt(wb.fazit)) return {ok:false,error:'fazit muss eine ganze Zahl ≥ 0 sein.'};
   const bKeys=Object.keys(wb.basis_pro_tagtyp||{});
-  if(bKeys.length!==WB_TAGTYPEN.length||!WB_TAGTYPEN.every(k=>bKeys.includes(k)))
-    return {ok:false,error:'basis_pro_tagtyp muss genau die 10 erlaubten Tagtypen enthalten.'};
-  for(const k of WB_TAGTYPEN) if(!isNonNegInt(wb.basis_pro_tagtyp[k])) return {ok:false,error:`Basis „${WB_TAGTYP_LABEL[k]}" muss eine ganze Zahl ≥ 0 sein.`};
+  if(!tagKeys.every(k=>bKeys.includes(k)))
+    return {ok:false,error:'basis_pro_tagtyp muss alle '+tagKeys.length+' Tagtypen aus dem Tagesarten-Tab enthalten.'};
+  for(const k of bKeys) if(!isNonNegInt(wb.basis_pro_tagtyp[k])) return {ok:false,error:`Basis „${WB_TAGTYP_LABEL[k]||k}" muss eine ganze Zahl ≥ 0 sein.`};
   const zKeys=Object.keys(wb.zuschlag_pro_block||{});
   if(zKeys.length!==WB_ZUSCHLAG.length||!WB_ZUSCHLAG.every(k=>zKeys.includes(k)))
     return {ok:false,error:'zuschlag_pro_block muss genau die 3 erlaubten Blöcke enthalten.'};
@@ -316,7 +326,7 @@ function wbValidate(wb){
 }
 // Weiche deckel_tag-Warnung (nur Hinweis, kein Block): höchster Basiswert + je 1× alle Zuschläge.
 function wbDeckelWarn(wb){
-  const maxBasis=Math.max(...WB_TAGTYPEN.map(k=>Number(wb.basis_pro_tagtyp[k])||0));
+  const maxBasis=Math.max(...Object.keys(wb.basis_pro_tagtyp||{}).map(k=>Number(wb.basis_pro_tagtyp[k])||0),0);
   const sumZuschlag=WB_ZUSCHLAG.reduce((s,k)=>s+(Number(wb.zuschlag_pro_block[k])||0),0);
   const plausibel=maxBasis+sumZuschlag;
   return (Number(wb.deckel_tag)||0)<plausibel ? plausibel : 0;
@@ -1727,9 +1737,12 @@ function App(){
     if(v==='pdf') return o;
     return{...((typeof o==='object')?o:{value:o,label:o}),disabled:true,title:'kommt später'};
   });
+  // v0.18.2 (BRIEF e→b 2026-07-19, L-WW-78): Fallback = führender 13er-Satz (WB_TAGTYPEN),
+  // seetag entfernt (→ meertag), stadttag/hafentag ergänzt. Labels im Fallback = Slug (F1=a);
+  // im Normalbetrieb weiterhin label_de aus der dynamischen tagesartenList.
   const tagTypenOpts=tagesartenList.length>0
     ?tagesartenList.map(t=>({value:t.tag_typ,label:t.label_de||t.tag_typ}))
-    :['anreisetag','normaltag','aktivtag','kulturtag','strandtag','seetag','transfertag','freier_tag','ausflugstag','wellnesstag','abreisetag'].map(v=>({value:v,label:v}));
+    :WB_TAGTYPEN.map(v=>({value:v,label:v}));
 
   // ============== COUNTRY-CODE LOOKUP ==============
   // v0.14.3: Reihenfolge: (1) Sheet-Wert (taxRegionLand[].country_code), (2) FALLBACK_CC nach
@@ -2246,6 +2259,10 @@ function App(){
 
   // ============== v0.17.0: WORTBUDGET-DEFAULT (Admin-Tab, canManage) ==============
   // GET/POST gegen WF1-Webhook-Host (apiBase) via apiCall — derselbe Auth-Header wie /update-status,/generate.
+  // v0.18.2 (L-WW-78): führender Tagtyp-Schlüsselsatz = Tagesarten-Tab (tagesartenList),
+  // Fallback = WB_TAGTYPEN (13). Labels bevorzugt label_de aus der dynamischen Liste.
+  const wbTagtypKeys=tagesartenList.length>0?tagesartenList.map(t=>t.tag_typ).filter(Boolean):WB_TAGTYPEN;
+  const wbLabelFor=k=>{const t=tagesartenList.find(x=>x.tag_typ===k);return (t&&t.label_de)||WB_TAGTYP_LABEL[k]||k;};
   const setWbTop=(key,val)=>setWortbudget(p=>({...p,[key]:val}));
   const setWbBasis=(key,val)=>setWortbudget(p=>({...p,basis_pro_tagtyp:{...p.basis_pro_tagtyp,[key]:val}}));
   const setWbZuschlag=(key,val)=>setWortbudget(p=>({...p,zuschlag_pro_block:{...p.zuschlag_pro_block,[key]:val}}));
@@ -2256,7 +2273,7 @@ function App(){
       const res=await apiCall('GET','/config-wortbudget');
       // b wertet success aus, nicht den HTTP-Status (Brief §3).
       if(res&&res.success&&res.wortbudget_json){
-        setWortbudget(wbCanonical(res.wortbudget_json));
+        setWortbudget(wbCanonical(res.wortbudget_json,wbTagtypKeys));
         setWbStatus('ok');setWbMsg('Default geladen.');
       }else{
         setWbStatus('err');setWbMsg('Konnte Default nicht laden ('+((res&&res.error)||'unerwartete Antwort')+') — zeige lokalen Standard.');
@@ -2265,18 +2282,18 @@ function App(){
       setWbStatus('err');setWbMsg('Ladefehler: '+err.message+' — zeige lokalen Standard.');
     }
     setWbLoaded(true);
-  },[apiCall]);
+  },[apiCall,tagesartenList]);
 
   const saveWortbudget=useCallback(async()=>{
     if(!canManage){showToast('err','Speichern ist Admin/Master vorbehalten.',8000);return;}
-    const canon=wbCanonical(wortbudget);          // exakter, kanonisch geordneter Schlüsselsatz
-    const v=wbValidate(canon);                     // Client-Spiegel der Server-Regeln
+    const canon=wbCanonical(wortbudget,wbTagtypKeys); // kanonisch geordnet; dynamischer Satz + verwaiste Keys (F5=a)
+    const v=wbValidate(canon,wbTagtypKeys);           // Client-Spiegel der Server-Regeln
     if(!v.ok){setWbStatus('err');setWbMsg('Validierung: '+v.error);return;}
     setWbStatus('saving');setWbMsg('Speichere Wortbudget-Default…');
     try{
       const res=await apiCall('POST','/config-wortbudget-save',{role:role,wortbudget:canon});
       if(res&&res.success){
-        if(res.wortbudget_json) setWortbudget(wbCanonical(res.wortbudget_json));
+        if(res.wortbudget_json) setWortbudget(wbCanonical(res.wortbudget_json,wbTagtypKeys));
         setWbStatus('ok');setWbMsg('Gespeichert.');
       }else{
         setWbStatus('err');setWbMsg('Speichern abgelehnt: '+((res&&res.error)||'unbekannt'));
@@ -2284,7 +2301,7 @@ function App(){
     }catch(err){
       setWbStatus('err');setWbMsg('Speicherfehler: '+err.message);
     }
-  },[apiCall,canManage,role,wortbudget]);
+  },[apiCall,canManage,role,wortbudget,tagesartenList]);
 
   // Beim ersten Öffnen des Admin-Tabs den globalen Default holen (sobald Auth steht).
   useEffect(()=>{
@@ -2407,7 +2424,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.1 (Sheet-gesteuerte Taxonomien)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.2 (Tagesarten 13 + dynamisches Wortbudget)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3047,7 +3064,7 @@ function App(){
 
       {/* v0.17.0: ADMIN-TAB — globaler Wortbudget-Default (nur admin/curator_master). */}
       {!showJson&&tab==='admin'&&canManage&&(()=>{
-        const canon=wbCanonical(wortbudget);
+        const canon=wbCanonical(wortbudget,wbTagtypKeys);
         const warnTo=wbDeckelWarn(canon);
         const numStyle={...iStyle,maxWidth:130,textAlign:'right'};
         const card={background:'var(--beige-light)',border:'1px solid #E0E0E0',borderRadius:8,padding:16,marginBottom:16};
@@ -3080,8 +3097,13 @@ function App(){
           </div>
 
           <div style={card}>
-            <div style={head}>Basis pro Tagtyp (10)</div>
-            {WB_TAGTYPEN.map(k=>numRow(WB_TAGTYP_LABEL[k]+' ('+k+')',wortbudget.basis_pro_tagtyp[k],v=>setWbBasis(k,v),k))}
+            <div style={head}>Basis pro Tagtyp ({Object.keys(canon.basis_pro_tagtyp).length})</div>
+            {/* v0.18.2: Zeilen dynamisch aus dem geführten Satz (Tagesarten-Tab) + erhaltene verwaiste Keys (F5=a). */}
+            {Object.keys(canon.basis_pro_tagtyp).map(k=>{
+              const orphan=!wbTagtypKeys.includes(k);
+              const raw=(wortbudget.basis_pro_tagtyp&&wortbudget.basis_pro_tagtyp[k]!==undefined)?wortbudget.basis_pro_tagtyp[k]:canon.basis_pro_tagtyp[k];
+              return numRow(wbLabelFor(k)+' ('+k+')'+(orphan?' — ⚠ nicht im Tagesarten-Tab':''),raw,v=>setWbBasis(k,v),k);
+            })}
           </div>
 
           <div style={card}>
@@ -3101,7 +3123,7 @@ function App(){
             <button onClick={loadWortbudget} disabled={wbStatus==='loading'} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>
               ↺ Neu laden
             </button>
-            <button onClick={()=>{setWortbudget(wbCanonical(WB_DEFAULT));setWbStatus(null);setWbMsg('');}} style={{background:'var(--white)',color:'#999',border:'1px solid #D0D0D0',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer'}}>
+            <button onClick={()=>{setWortbudget(wbCanonical(WB_DEFAULT,wbTagtypKeys));setWbStatus(null);setWbMsg('');}} style={{background:'var(--white)',color:'#999',border:'1px solid #D0D0D0',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer'}}>
               Auf Standard zurücksetzen
             </button>
           </div>
