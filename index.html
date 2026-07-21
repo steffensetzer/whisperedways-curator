@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.2 (Tagesarten 13 + dynamisches Wortbudget)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.3 (Tagesarten aktiv/inaktiv + Kalibrierungshinweis)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -206,12 +206,16 @@ function Section({title,icon,open=true,onToggle,children}){const collapsible=!!o
 // Bis dahin (oder bei fehlendem feld_key) zeigt jedes „i" den einheitlichen Fallback. KEIN feldspezifischer Hardcode.
 const WHISPERER_I_FALLBACK='Hilfetext noch nicht verfügbar.';
 const WhispererIContext=React.createContext({});
-function InfoI({feldKey}){
+// v0.18.3: optionaler Prop `fallback` — feldspezifischer Ersatztext, falls der Sheet-Eintrag
+// (noch) fehlt. Wird NUR dort gesetzt, wo der Inhalt fachlich verpflichtend ist (Brief e→b/c §3.5,
+// Kalibrierungshinweis). Ohne `fallback` gilt unverändert der einheitliche WHISPERER_I_FALLBACK.
+function InfoI({feldKey,fallback}){
   const map=React.useContext(WhispererIContext)||{};
   const[open,setOpen]=useState(false);
   const entry=map[feldKey];
   const hasContent=!!(entry&&(entry.was_tun||entry.eingabe||entry.beispiel));
-  const titleText=hasContent?(entry.was_tun||'Erklärung anzeigen'):WHISPERER_I_FALLBACK;
+  const fbText=fallback||WHISPERER_I_FALLBACK;
+  const titleText=hasContent?(entry.was_tun||'Erklärung anzeigen'):fbText;
   return <span style={{position:'relative',display:'inline-flex',verticalAlign:'middle'}}>
     <button type="button" onClick={e=>{e.preventDefault();setOpen(o=>!o);}} title={titleText} aria-label="Erklärung anzeigen"
       style={{width:16,height:16,minWidth:16,borderRadius:'50%',border:'1px solid var(--sage)',background:open?'var(--sage)':'var(--white)',color:open?'var(--white)':'var(--sage)',fontSize:11,fontWeight:700,lineHeight:1,cursor:'pointer',padding:0,display:'inline-flex',alignItems:'center',justifyContent:'center',fontFamily:'Georgia,serif'}}>i</button>
@@ -222,7 +226,7 @@ function InfoI({feldKey}){
           {entry.was_tun&&<div style={{marginBottom:6}}>{entry.was_tun}</div>}
           {entry.eingabe&&<div style={{marginBottom:6}}><strong style={{color:'var(--sage-dark)'}}>Eingabe:</strong> {entry.eingabe}</div>}
           {entry.beispiel&&<div style={{color:'#666',fontStyle:'italic'}}><strong style={{fontStyle:'normal',color:'var(--sage-dark)'}}>Beispiel:</strong> {entry.beispiel}</div>}
-        </>:<div style={{color:'#888',fontStyle:'italic'}}>{WHISPERER_I_FALLBACK}</div>}
+        </>:<div style={{color:fallback?'var(--anthrazit)':'#888',fontStyle:fallback?'normal':'italic'}}>{fbText}</div>}
       </div>
     </>}
   </span>;
@@ -278,6 +282,23 @@ function Slider({labels,value=3,onChange,dim}){
 // v0.18.2 (L-WW-78): Tagtyp-Schlüsselsatz nicht mehr fix — führend ist der Tagesarten-Tab
 // (tagesartenList zur Laufzeit). Die Konstanten unten sind reiner Fallback (13er-Satz, deckungsgleich
 // mit Wortbudget_Policy Stand 2026-07-20). Zuschläge + deckel_tag/einleitung/fazit bleiben fixes Schema.
+// v0.18.3 (Brief e→b/c 2026-07-21, §3.5): Kalibrierungshinweis zur gepflegten Wortbasis.
+// Quelle = Messdaten Strang G. Wird über /whisperer-i (feld_key `wortbudget_basis`) ausgeliefert,
+// sobald c den Tab befüllt hat; bis dahin greift dieser Fallback (F6=b).
+const WB_KALIBRIERUNG_FALLBACK='Die Wortbasis ist ein Richtwert für den Fließtext „Der Tag" — keine Zielgröße für den ganzen Tagestext. Real erzeugt das System daraus ca. 72–86 % (Mittel ~79 %) im Fließtext und ca. 130–190 % (Mittel ~156 %) im gesamten Tagestext. Die Differenz entsteht durch die Blockzuschläge in Highlights, „Gut zu wissen", Tagesüberblick und Restaurant-Empfehlungen.';
+
+// v0.18.3: /tagesarten liefert ab WF1 v2.7.4 ALLE Typen inkl. `aktiv` (echtes Boolean, c-Zusage
+// vom 2026-07-21). Das Parsen ist zusätzlich tolerant gegenüber Sheet-Strings; fehlt das Feld
+// ganz (Alt-Response vor v2.7.4), gilt die Zeile als aktiv — kein Verhaltenswechsel im Übergang.
+const taIsAktiv=t=>{
+  if(!t) return false;
+  const a=t.aktiv;
+  if(a===undefined||a===null||a==='') return true;
+  if(typeof a==='boolean') return a;
+  const s=String(a).trim().toUpperCase();
+  return !(s==='FALSE'||s==='NEIN'||s==='NO'||s==='N'||s==='0');
+};
+
 const WB_TAGTYPEN=['anreisetag','abreisetag','transfertag','freier_tag','meertag','normaltag','stadttag','ausflugstag','aktivtag','kulturtag','strandtag','hafentag','wellnesstag'];
 const WB_ZUSCHLAG=['stopp','restaurant','aktivitaet'];
 const WB_TAGTYP_LABEL={anreisetag:'Anreisetag',abreisetag:'Abreisetag',transfertag:'Transfertag',freier_tag:'Freier Tag',meertag:'Meertag',normaltag:'Normaltag',stadttag:'Stadttag',ausflugstag:'Ausflugstag',aktivtag:'Aktivtag',kulturtag:'Kulturtag',strandtag:'Strandtag',hafentag:'Hafentag',wellnesstag:'Wellnesstag'};
@@ -1740,9 +1761,19 @@ function App(){
   // v0.18.2 (BRIEF e→b 2026-07-19, L-WW-78): Fallback = führender 13er-Satz (WB_TAGTYPEN),
   // seetag entfernt (→ meertag), stadttag/hafentag ergänzt. Labels im Fallback = Slug (F1=a);
   // im Normalbetrieb weiterhin label_de aus der dynamischen tagesartenList.
-  const tagTypenOpts=tagesartenList.length>0
-    ?tagesartenList.map(t=>({value:t.tag_typ,label:t.label_de||t.tag_typ}))
-    :WB_TAGTYPEN.map(v=>({value:v,label:v}));
+  // v0.18.3 (Brief e→b/c §3.2, F5=a): /tagesarten liefert jetzt auch inaktive Typen. Im
+  // Tagesablauf sind nur aktive Typen wählbar. Ein bereits gespeicherter, inzwischen inaktiver
+  // Wert bleibt als Option mit Zusatz „(inaktiv)" erhalten — sonst fiele ein Altentwurf beim
+  // Laden still auf leer zurück. Die Funktion wird je Tag mit dem aktuellen Wert aufgerufen.
+  const tagTypenOptsFor=cur=>{
+    if(tagesartenList.length===0) return WB_TAGTYPEN.map(v=>({value:v,label:v}));
+    const opts=tagesartenList.filter(taIsAktiv).map(t=>({value:t.tag_typ,label:t.label_de||t.tag_typ}));
+    if(cur&&!opts.some(o=>o.value===cur)){
+      const row=tagesartenList.find(t=>t.tag_typ===cur);
+      opts.push({value:cur,label:((row&&row.label_de)||WB_TAGTYP_LABEL[cur]||cur)+' (inaktiv)'});
+    }
+    return opts;
+  };
 
   // ============== COUNTRY-CODE LOOKUP ==============
   // v0.14.3: Reihenfolge: (1) Sheet-Wert (taxRegionLand[].country_code), (2) FALLBACK_CC nach
@@ -2424,7 +2455,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.2 (Tagesarten 13 + dynamisches Wortbudget)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.3 (Tagesarten aktiv/inaktiv + Kalibrierungshinweis)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2936,7 +2967,7 @@ function App(){
             </div>
             {open&&<div style={{padding:16}}>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-                <Field label="Tag-Typ" badge="PFLICHT" half><Sel options={tagTypenOpts} value={tag.tag_typ} onChange={v=>updateTag(ti,'tag_typ',v)}/></Field>
+                <Field label="Tag-Typ" badge="PFLICHT" half><Sel options={tagTypenOptsFor(tag.tag_typ)} value={tag.tag_typ} onChange={v=>updateTag(ti,'tag_typ',v)}/></Field>
                 <Field label="Tag-Titel" badge="EMPFOHLEN" half><TI placeholder="z.B. Die weißen Dörfer" value={tag.tag_titel} onChange={v=>updateTag(ti,'tag_titel',v)}/></Field>
               </div>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
@@ -3097,13 +3128,32 @@ function App(){
           </div>
 
           <div style={card}>
-            <div style={head}>Basis pro Tagtyp ({Object.keys(canon.basis_pro_tagtyp).length})</div>
-            {/* v0.18.2: Zeilen dynamisch aus dem geführten Satz (Tagesarten-Tab) + erhaltene verwaiste Keys (F5=a). */}
+            <div style={{...head,display:'flex',alignItems:'center',gap:6}}>
+              <span>Basis pro Tagtyp ({Object.keys(canon.basis_pro_tagtyp).length})</span>
+              {/* v0.18.3 (§3.5, F6=b): Kalibrierungshinweis aus /whisperer-i, Fallback hartkodiert. */}
+              <InfoI feldKey="wortbudget_basis" fallback={WB_KALIBRIERUNG_FALLBACK}/>
+            </div>
+            {/* v0.18.3 (§3.3/§3.4): dreistufig — aktiv (neutral) · im Tab aber aktiv=false (ausgegraut,
+                Wert bleibt editierbar, damit ein neuer Typ ohne temporäres Aktivieren bepreisbar ist)
+                · nicht im Tab (Fremdkey, F5=a: Wert wird erhalten und weiter gespeichert). */}
             {Object.keys(canon.basis_pro_tagtyp).map(k=>{
+              const row=tagesartenList.find(t=>t.tag_typ===k);
               const orphan=!wbTagtypKeys.includes(k);
+              const inaktiv=!orphan&&!!row&&!taIsAktiv(row);
               const raw=(wortbudget.basis_pro_tagtyp&&wortbudget.basis_pro_tagtyp[k]!==undefined)?wortbudget.basis_pro_tagtyp[k]:canon.basis_pro_tagtyp[k];
-              return numRow(wbLabelFor(k)+' ('+k+')'+(orphan?' — ⚠ nicht im Tagesarten-Tab':''),raw,v=>setWbBasis(k,v),k);
+              const labelColor=orphan?'#8A6D00':inaktiv?'#9A9A9A':'var(--anthrazit)';
+              return <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'5px 0',borderBottom:'1px solid #ECECEC'}}>
+                <span style={{fontSize:13,color:labelColor,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                  <span>{wbLabelFor(k)} ({k})</span>
+                  {inaktiv&&<span title="Im Tagesarten-Tab vorhanden, aber aktiv=FALSE — nicht wählbar in der Reise-Eingabe. Wert bleibt gepflegt und wird gespeichert." style={{fontSize:11,padding:'1px 7px',borderRadius:4,background:'#EFEFEF',color:'#777',fontWeight:600,whiteSpace:'nowrap'}}>inaktiv</span>}
+                  {orphan&&<span title="Schlüssel steht nicht im Tagesarten-Tab. Wert wird erhalten und mitgespeichert; beim Speichern legt das Backend dafür eine Tagesarten-Zeile mit aktiv=FALSE an." style={{fontSize:11,padding:'1px 7px',borderRadius:4,background:'#FFF8E1',color:'#8A6D00',fontWeight:600,whiteSpace:'nowrap'}}>⚠ nicht im Tagesarten-Tab</span>}
+                </span>
+                <input type="number" min={0} step={1} style={{...numStyle,...(inaktiv?{background:'#F7F7F7',color:'#777'}:{})}} value={raw} onChange={e=>setWbBasis(k,e.target.value)}/>
+              </div>;
             })}
+            <div style={{fontSize:11,color:'#888',marginTop:8,lineHeight:1.5}}>
+              Inaktive Typen bleiben hier bepreisbar — <code>aktiv</code> steuert allein die Auswahl im Tagesablauf und wird im Tagesarten-Tab gepflegt.
+            </div>
           </div>
 
           <div style={card}>
