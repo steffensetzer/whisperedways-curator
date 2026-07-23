@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.5 (Login: Benutzername + Key-Reset)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.6 (Hotel-Dedup: Wiederholungslauf bei analyse_fehler)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1983,63 +1983,110 @@ function App(){
       // Duplikat-Schutz: bevor neue Hotel-ID erzeugt wird, prüfen ob das Hotel via google_place_id
       // schon in der WW-DB liegt. Wenn ja, übernehmen wir die existierenden Daten — keine neue ID,
       // kein Stub-Save, keine Analyse. Verhalten dann analog pickDbHotel.
+      //
+      // v0.18.6 (BRIEF e→b 2026-07-23 §1, D1–D3): Der Early-Return war statusblind und hat damit
+      // Wiederholungsläufe unerreichbar gemacht. Liefert die Dedup-Prüfung eine Zeile mit
+      // status='analyse_fehler', fällt der Code jetzt in den Analysepfad durch — mit der
+      // BESTEHENDEN hotel_id (kein /hotel-id-next, kein erneuter Stub-Save, die Zeile existiert).
+      // WF5 `Find Existing Hotel (Early)` behandelt analyse_fehler-Zeilen nicht als „fertig"
+      // und läuft erneut durch (c-Verifikationslauf 2026-07-23, Prüfpunkt 4d).
+      // D3: NUR der explizite Wert 'analyse_fehler' entsperrt. 'analysiert', 'entwurf' und
+      // unbekannte Statuswerte deduplizieren weiter wie bisher — ein unbekannter Zustand ist
+      // kein belegter Fehlerzustand. Ein genereller „Neu analysieren"-Pfad ist bewusst NICHT
+      // Teil dieses Auftrags (R1/WP-Post-Update noch in Bau → sonst Post-Dubletten).
+      let retryHotelId='';     // gesetzt = Wiederholungslauf auf bestehender Zeile
+      let retryHotelName='';
+      let retryWpUrl='';
       if(cand.google_place_id){
         try{
           const dup=await apiCall('GET',`/hotel-search?google_place_id=${encodeURIComponent(cand.google_place_id)}`);
           if(dup&&dup.success&&dup.matches&&dup.matches.length>0){
             const m=dup.matches[0];
-            const h=[...trip.hotels];
-            h[hi]={...h[hi],hotel_id:m.hotel_id,name:m.hotel_name||cand.name,adresse:h[hi].adresse||cand.address||'',wp_url:m.wp_url||''};
-            setT('hotels',h);
-            setHS(hi,{phase:'done',dbResults:[],placesResults:[]});
-            return;
+            const dupStatus=String(m.status==null?'':m.status).trim();
+            if(dupStatus==='analyse_fehler'&&m.hotel_id){
+              retryHotelId=m.hotel_id;
+              retryHotelName=m.hotel_name||'';
+              retryWpUrl=m.wp_url||'';
+            }else{
+              const h=[...trip.hotels];
+              h[hi]={...h[hi],hotel_id:m.hotel_id,name:m.hotel_name||cand.name,adresse:h[hi].adresse||cand.address||'',wp_url:m.wp_url||''};
+              setT('hotels',h);
+              setHS(hi,{phase:'done',dbResults:[],placesResults:[]});
+              return;
+            }
           }
         }catch(dupErr){
           // Wenn der Duplikat-Check fehlschlägt, fahren wir mit dem normalen Flow fort.
           console.warn('Duplikat-Check via google_place_id fehlgeschlagen, fahre mit Neu-Anlage fort:',dupErr.message);
         }
       }
-      const idRes=await apiCall('GET',`/hotel-id-next?hotel_land=${encodeURIComponent(cc)}&hotel_ort=${encodeURIComponent(ort)}`);
-      if(!idRes.success) throw new Error(idRes.error||'Hotel-ID konnte nicht generiert werden');
-      const newHotelId=idRes.next_id;
+      // v0.18.6 (D2): Neue ID nur im Neu-Anlage-Fall. Im Wiederholungslauf wird die bestehende
+      // hotel_id weiterverwendet — eine zweite ID für dasselbe Hotel wäre eine echte Dublette.
+      let targetHotelId=retryHotelId;
+      if(!targetHotelId){
+        const idRes=await apiCall('GET',`/hotel-id-next?hotel_land=${encodeURIComponent(cc)}&hotel_ort=${encodeURIComponent(ort)}`);
+        if(!idRes.success) throw new Error(idRes.error||'Hotel-ID konnte nicht generiert werden');
+        targetHotelId=idRes.next_id;
+      }
+      const targetHotelName=retryHotelName||cand.name;
 
       // Optimistic Update
-      setHS(hi,{phase:'analyzing',analyzing_id:newHotelId,analyzing_name:cand.name});
+      setHS(hi,{phase:'analyzing',analyzing_id:targetHotelId,analyzing_name:targetHotelName});
       const h=[...trip.hotels];
-      h[hi]={...h[hi],hotel_id:newHotelId,name:cand.name,adresse:cand.address};
+      h[hi]={...h[hi],
+        hotel_id:targetHotelId,
+        name:targetHotelName,
+        // Im Wiederholungslauf eine bereits gepflegte Adresse/wp_url nicht überschreiben.
+        adresse:retryHotelId?(h[hi].adresse||cand.address||''):cand.address,
+        wp_url:h[hi].wp_url||retryWpUrl||''
+      };
       setT('hotels',h);
 
       // Stub anlegen (Hotel_ID + Pflichtfelder ins Hotels-Sheet, BEVOR Analyse läuft)
       // → Wenn /hotel-analyse das Mapping verschluckt, findet WF5 die Zeile via name+ort und updated sie.
       // → Wenn Analyse fehlschlägt, bleibt Stub mit status='entwurf' als Wiederaufnahmepunkt.
-      try{
-        await apiCall('POST','/hotel-save',{
-          hotel_id:newHotelId,
-          hotel_name:cand.name,
-          hotel_ort:ort,
-          hotel_land:cc,
-          hotel_plz:plz,
-          user_id:currentUserId,
-          reise_id:''
-        });
-      }catch(stubErr){
-        console.warn('Hotel-Stub konnte nicht angelegt werden, fahre trotzdem mit Analyse fort:',stubErr.message);
+      // v0.18.6 (D2): Im Wiederholungslauf entfällt der Stub — die Zeile existiert bereits und
+      // ein Stub-Save würde gepflegte Felder mit den Google-Rohwerten überschreiben.
+      if(!retryHotelId){
+        try{
+          await apiCall('POST','/hotel-save',{
+            hotel_id:targetHotelId,
+            hotel_name:targetHotelName,
+            hotel_ort:ort,
+            hotel_land:cc,
+            hotel_plz:plz,
+            user_id:currentUserId,
+            reise_id:''
+          });
+        }catch(stubErr){
+          console.warn('Hotel-Stub konnte nicht angelegt werden, fahre trotzdem mit Analyse fort:',stubErr.message);
+        }
       }
 
       const payload={
-        hotel_id:newHotelId,
-        hotel_name:cand.name,
+        hotel_id:targetHotelId,
+        hotel_name:targetHotelName,
         hotel_ort:ort,
         hotel_land:cc,
         hotel_plz:plz,
         google_place_id:cand.google_place_id,
         user_id:currentUserId,
+        // v0.18.6 (BRIEF e→b 2026-07-23 §2): bleibt vorerst leer. Eine `reise_id` existiert zum
+        // Zeitpunkt der Hotel-Analyse strukturell noch nicht (sie wird erst von /generate
+        // vergeben); der einzige verfügbare Bezug wäre `entwurf_id`. Kontraktfrage → e-Entscheid,
+        // deshalb hier bewusst KEIN stiller Workaround.
         reise_id:''
       };
       // Fire-and-forget — User kann weiterarbeiten während WF5 läuft
       apiCall('POST','/hotel-analyse',payload).then(r=>{
         if(r&&r.success){
           setHS(hi,{phase:'analyzed',analyzed_at:new Date().toISOString()});
+          // v0.18.6 (D4): Statuszustand einmalig nachladen, damit ein zuvor angezeigter
+          // analyse_fehler nicht als veralteter Wert in der Fertig-View stehenbleibt.
+          // Nicht-kritisch: Fehler werden ignoriert, spätestens der Reload korrigiert.
+          apiCall('GET',`/hotel-single?hotel_id=${encodeURIComponent(targetHotelId)}`).then(hr=>{
+            if(hr&&hr.success&&hr.hotel) setHotelStatusFor(targetHotelId,{status:hr.hotel.status||'',grund:hr.hotel.grund||''});
+          }).catch(()=>{});
         }else{
           setHS(hi,{phase:'analyze_error',error:(r&&r.error)||'Analyse-Antwort ohne Erfolgsbestätigung'});
         }
@@ -2599,7 +2646,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.5 (Login: Benutzername + Key-Reset)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.6 (Hotel-Dedup: Wiederholungslauf bei analyse_fehler)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
