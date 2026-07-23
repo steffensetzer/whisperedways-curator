@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.4 (Hotel-Status analyse_fehler)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.5 (Login: Benutzername + Key-Reset)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -825,11 +825,46 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
   // damit nachgelagerte Endpoints (save-draft, hotel-search etc.) ihn ebenfalls senden.
   const[apiKey,setApiKey]=useState(authHeaderValue||'');
   const needsApiKey=!authHeaderValue;
+  // v0.18.5 (BRIEF e→b B1): Ein bereits gespeicherter, aber ungültiger API-Schlüssel führte
+  // bisher in eine Sackgasse — das Schlüsselfeld hing allein an `!authHeaderValue`. Jetzt
+  // blendet ein erkannter Auth-Fehler das Feld wieder ein und schaltet „Zugang zurücksetzen" frei.
+  const[authFehlerAufgetreten,setAuthFehlerAufgetreten]=useState(false);
+  // Letzter technischer Fehlertext — nur für den vorbefüllten Support-Mailto (§4.5).
+  const[lastTechDetail,setLastTechDetail]=useState('');
+  const showApiKeyField=!authHeaderValue||authFehlerAufgetreten;
   useEffect(()=>{setApiKey(authHeaderValue||'');},[authHeaderValue]);
 
+  // v0.18.5 (§4.3): löscht ausschließlich den Zugangsschlüssel + Session.
+  // apiBase, authHeaderName und mode bleiben unangetastet. Kein Reload nötig.
+  const resetZugang=()=>{
+    try{localStorage.removeItem('ww_authHeaderValue');}catch{}
+    clearSession();
+    setApiKey('');
+    setErr('');
+    setAuthFehlerAufgetreten(false);
+    if(onAuthHeaderValueChange) onAuthHeaderValueChange('');
+  };
+
+  // v0.18.5 (§4.5): Support-Mail mit Diagnosedaten — ohne Passwort, ohne Passwort-Hash,
+  // ohne API-Schlüssel. Alle Werte URL-kodiert.
+  const supportMailto=()=>{
+    const body=[
+      'Kennung (E-Mail oder Benutzername): '+(email||'—'),
+      'API-Base: '+(apiBase||'—'),
+      'Technischer Fehlertext: '+(lastTechDetail||'—'),
+      'Zeitpunkt: '+new Date().toLocaleString('de-DE'),
+      'Browser: '+((typeof navigator!=='undefined'&&navigator.userAgent)||'—'),
+      '',
+      '(Passwort und Zugangsschlüssel sind bewusst nicht enthalten.)'
+    ].join('\n');
+    return 'mailto:info@ki-souffleur.de'
+      +'?subject='+encodeURIComponent('Whispered Ways: Kein Login möglich')
+      +'&body='+encodeURIComponent(body);
+  };
+
   const submit=async()=>{
-    if(!email||!password){setErr('Bitte E-Mail und Passwort eingeben.');return;}
-    if(needsApiKey&&!apiKey.trim()){setErr('Bitte API-Schlüssel eingeben (einmalig pro Gerät/Browser).');return;}
+    if(!email||!password){setErr('Bitte E-Mail-Adresse oder Benutzername und Passwort eingeben.');return;}
+    if(showApiKeyField&&!apiKey.trim()){setErr('Bitte API-Schlüssel eingeben (einmalig pro Gerät/Browser).');return;}
     setErr('');setLoading(true);
     try{
       const effectiveApiKey=apiKey.trim()||authHeaderValue;
@@ -850,19 +885,28 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
       // technische Text war für Friendly-Tester verwirrend. Hier mappen wir typische Fälle auf
       // verständliche Meldungen und behalten die technischen Details als kleines Sub-Detail.
       if(data&&data.success){
+        setAuthFehlerAufgetreten(false);
         saveSession(data.user);
         onLogin(data.user);
       }else if(data&&data.error){
-        // Backend liefert strukturierte Fehlermeldung — direkt anzeigen.
+        // Backend liefert strukturierte Fehlermeldung (echte Falsch-Passwort-Antwort) —
+        // direkt anzeigen. Verhalten unverändert (§4.1 Abgrenzung).
         setErr(data.error);
       }else{
         // Plain-Text-Antwort oder kein JSON. Anhand HTTP-Status und Inhalt mappen.
         const raw=(txt||'').trim();
+        const detail=raw?raw.substring(0,120):`HTTP ${res.status}`;
+        setLastTechDetail(detail);
         let friendly='';
         if(res.status===401||/auth/i.test(raw)){
+          // v0.18.5 (§4.1): 401 bzw. "Authorization data is wrong!" kommt vom Header-Auth des
+          // Webhooks und zeigt auf einen ungültigen API-Schlüssel — NICHT auf falsche Zugangsdaten.
           friendly=needsApiKey
-            ?'Anmeldung fehlgeschlagen. Bitte E-Mail, Passwort und API-Schlüssel prüfen.'
-            :'E-Mail oder Passwort ist falsch.';
+            ?'Der eingegebene Zugangsschlüssel wird vom Server abgelehnt. Bitte Schlüssel prüfen und erneut versuchen.'
+            :'Der auf diesem Gerät gespeicherte Zugangsschlüssel ist ungültig oder abgelaufen. Bitte über „Zugang zurücksetzen" einen neuen Schlüssel eingeben.';
+          // Auch im Fall needsApiKey===true setzen: Der eben eingegebene Schlüssel wurde bereits
+          // persistiert, sonst verschwände das Feld beim nächsten Render (Sackgasse).
+          setAuthFehlerAufgetreten(true);
         }else if(res.status===403){
           friendly='Zugriff verweigert. Bitte mit Whispered-Ways-Support in Kontakt setzen.';
         }else if(res.status===404){
@@ -874,7 +918,6 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
         }
         // Technische Details als zweite Zeile, wenn vorhanden — hilft Steffen beim Debuggen,
         // ohne den Friendly-Tester zu verwirren.
-        const detail=raw?raw.substring(0,120):`HTTP ${res.status}`;
         setErr(friendly+'\n\n[Technisch: '+detail+']');
       }
     }catch(e){
@@ -895,19 +938,36 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
 
       {err&&<div style={{background:'#fee',color:'var(--red)',padding:'10px 14px',borderRadius:6,marginBottom:16,fontSize:13,textAlign:'left',whiteSpace:'pre-line',lineHeight:1.5}}>{err}</div>}
 
-      <input type="email" placeholder="E-Mail-Adresse" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="email" autoFocus
+      {/* v0.18.5 (BRIEF e→b A): WF1 löst auch gegen Benutzername auf. Deshalb type="text"
+          statt "email" (keine Browser-Formatprüfung) und autoComplete="username".
+          Der Payload-Feldname bleibt unverändert `email`. */}
+      <input type="text" placeholder="E-Mail-Adresse / Benutzername" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} autoComplete="username" autoFocus
         onKeyDown={e=>{if(e.key==='Enter') document.getElementById('ww-login-pw')?.focus();}}/>
 
-      <input id="ww-login-pw" type="password" placeholder="Passwort" value={password} onChange={e=>setPassword(e.target.value)} style={{...inputStyle,marginBottom:needsApiKey?12:24}} autoComplete="current-password"
-        onKeyDown={e=>{if(e.key==='Enter') needsApiKey?document.getElementById('ww-login-apikey')?.focus():submit();}}/>
+      <input id="ww-login-pw" type="password" placeholder="Passwort" value={password} onChange={e=>setPassword(e.target.value)} style={{...inputStyle,marginBottom:showApiKeyField?12:24}} autoComplete="current-password"
+        onKeyDown={e=>{if(e.key==='Enter') showApiKeyField?document.getElementById('ww-login-apikey')?.focus():submit();}}/>
 
-      {needsApiKey&&<>
+      {showApiKeyField&&<>
         <input id="ww-login-apikey" type="password" placeholder="z. B. Bearer 75db804c..." value={apiKey} onChange={e=>setApiKey(e.target.value)} style={{...inputStyle,marginBottom:6}}
           onKeyDown={e=>{if(e.key==='Enter') submit();}}/>
         <div style={{fontSize:11,color:'#888',marginBottom:18,textAlign:'left',lineHeight:1.4}}>
           {authHeaderName}-Header (z. B. <code>Bearer &lt;token&gt;</code>). Einmalig pro Gerät/Browser nötig. Wird lokal gespeichert.
         </div>
       </>}
+
+      {/* v0.18.5 (§4.3–4.5): nur sichtbar nach erkanntem Auth-Fehler — bewusst nicht dauerhaft,
+          damit sich niemand versehentlich selbst aussperrt. */}
+      {authFehlerAufgetreten&&<div style={{textAlign:'left',marginBottom:18,padding:'12px 14px',background:'var(--beige-light)',border:'1px solid #E0E0E0',borderRadius:8}}>
+        <button type="button" onClick={resetZugang} style={{width:'100%',padding:10,background:'var(--white)',color:'var(--coral)',border:'1px solid var(--coral)',borderRadius:8,fontSize:13,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+          Zugang zurücksetzen
+        </button>
+        <div style={{fontSize:11,color:'#888',marginTop:8,lineHeight:1.5}}>
+          Entfernt den auf diesem Gerät gespeicherten Zugangsschlüssel. Danach wird der Schlüssel einmalig neu eingegeben. Nur falls das nicht hilft: Browserdaten/Cache für diese Seite löschen.
+        </div>
+        <div style={{fontSize:11,marginTop:10}}>
+          <a href={supportMailto()} style={{color:'var(--sage)',fontWeight:600}}>Ich komme nicht mehr rein</a>
+        </div>
+      </div>}
 
       <button onClick={submit} disabled={loading} style={{width:'100%',padding:12,background:loading?'#aaa':'var(--sage)',color:'var(--white)',border:'none',borderRadius:8,fontSize:15,cursor:loading?'wait':'pointer',fontWeight:600,fontFamily:'inherit',transition:'background 0.2s'}}>
         {loading?'Wird geprüft…':'Anmelden'}
@@ -2539,7 +2599,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.4 (Hotel-Status analyse_fehler)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.5 (Login: Benutzername + Key-Reset)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
