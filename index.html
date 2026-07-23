@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.3 (Tagesarten aktiv/inaktiv + Kalibrierungshinweis)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.18.4 (Hotel-Status analyse_fehler)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -616,8 +616,37 @@ function ProfilfotoUploader({value=[],onChange,uploadFn,max=3,disabled=false}){
   </div>;
 }
 
+// ===================== v0.18.4: HOTEL-STATUS-VOKABULAR =====================
+// Brief e→b 2026-07-22 (WF5-Härtung §3 / c-E4): Der Hotel-Datensatz kennt ab dem
+// WF5-Patchsatz einen dritten Statuswert `analyse_fehler`. Bricht das Modell in
+// `Parse Bewertung Result` das JSON, bleibt die Bewertungszusammenfassung leer und
+// der Datensatz wird als Fehlerzustand markiert — kein stiller Rohtext-Fallback mehr.
+//
+// WICHTIG: Der Status ist Live-Zustand der Hotels-DB (WF5), NICHT des Entwurfs.
+// Er wird deshalb in eigenem State gehalten (hotelStatus, keyed by hotel_id) und
+// NIEMALS nach `hotels_pool_json` geschrieben — sonst würde ein Snapshot im
+// Entwurfs-Sheet einfrieren und beim Reload einen veralteten Zustand vortäuschen.
+const HOTEL_STATUS_META={
+  analysiert:     {label:'Analysiert',             icon:'✓', bg:'#E8F5E9', border:'var(--green)', fg:'#2E7D32'},
+  entwurf:        {label:'Analyse ausstehend',     icon:'◔', bg:'#FFF8DC', border:'#FFC107',      fg:'#8A6D00'},
+  analyse_fehler: {label:'Analyse fehlgeschlagen', icon:'⚠', bg:'#FFEBEE', border:'var(--red)',   fg:'var(--red)'}
+};
+// Defensive Anzeige: Werte außerhalb des bekannten Satzes werden als Rohwert sichtbar
+// durchgereicht statt verschluckt (gleiche Leitidee wie Tagtyp-Dropdown, F5/v0.18.3).
+// Rückgabe null = kein Statuswert bekannt (noch nicht geladen / Endpoint liefert nichts)
+// → Aufrufer rendert die neutrale Alt-Ansicht.
+function hotelStatusMeta(raw){
+  const key=String(raw==null?'':raw).trim();
+  if(!key) return null;
+  if(HOTEL_STATUS_META[key]) return {...HOTEL_STATUS_META[key],key,known:true};
+  return {label:key,icon:'?',bg:'#F3F0FA',border:'#B0A4C8',fg:'#5B4B8A',key,known:false};
+}
+
 // ===================== HOTEL-SUCHE UI (inline pro Hotel) =====================
-function HotelSearchPanel({hi,state,trip,onStart,onPickDb,onSearchPlaces,onPickGoogle,onCancel,onReset}){
+// v0.18.4: neuer Prop `statusInfo` = {status, grund} aus der Hotels-DB (via /hotel-single
+// beim Entwurf-Laden bzw. direkt aus dem DB-Treffer bei pickDbHotel). Optional — fehlt er,
+// verhält sich das Panel wie vor v0.18.4.
+function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPlaces,onPickGoogle,onCancel,onReset}){
   const phase=state?.phase||'idle';
   const ortHint=trip.region_land||'';
   const hotel=trip.hotels[hi];
@@ -625,13 +654,31 @@ function HotelSearchPanel({hi,state,trip,onStart,onPickDb,onSearchPlaces,onPickG
   if(phase==='idle'||phase==='done'){
     // Fertig-View: Hotel ist bereits ausgewählt (DB-Pick oder Analyse abgeschlossen)
     if(hotel.hotel_id){
-      return <div style={{marginTop:8,marginBottom:8,padding:10,background:'#E8F5E9',borderRadius:6,border:'1px solid var(--green)',fontSize:12}}>
+      // v0.18.4: Statuszustand aus der Hotels-DB. meta===null → Alt-Ansicht (grün, neutral).
+      const meta=hotelStatusMeta(statusInfo&&statusInfo.status);
+      const bg=meta?meta.bg:'#E8F5E9';
+      const bd=meta?meta.border:'var(--green)';
+      const fg=meta?meta.fg:'#2E7D32';
+      const head=meta?`${meta.icon} Hotel ausgewählt — ${meta.label}`:'✓ Hotel ausgewählt';
+      const grund=(statusInfo&&statusInfo.grund)?String(statusInfo.grund):'';
+      return <div style={{marginTop:8,marginBottom:8,padding:10,background:bg,borderRadius:6,border:'1px solid '+bd,fontSize:12}}>
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <span style={{color:'#2E7D32',fontWeight:700}}>✓ Hotel ausgewählt</span>
+          <span style={{color:fg,fontWeight:700}}>{head}</span>
           <span style={{fontSize:11,color:'var(--sage-dark)',background:'var(--sage-light)',padding:'2px 8px',borderRadius:4,fontWeight:600}}>{hotel.hotel_id}</span>
           {hotel.wp_url&&<a href={hotel.wp_url} target="_blank" rel="noopener noreferrer" style={{color:'var(--coral)',textDecoration:'none',fontWeight:600,fontSize:12}}>→ Zum Hotel-Beitrag</a>}
           <button onClick={()=>onReset(hi)} style={{marginLeft:'auto',background:'none',border:'1px solid #999',borderRadius:4,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'#666'}}>Anderes Hotel wählen</button>
         </div>
+        {meta&&!meta.known&&<div style={{fontSize:11,color:'#5B4B8A',marginTop:6}}>
+          Unbekannter Statuswert aus der Hotel-Datenbank — Rohwert wird unverändert angezeigt.
+        </div>}
+        {meta&&meta.key==='analyse_fehler'&&<div style={{fontSize:11,color:'#666',marginTop:6,lineHeight:1.5}}>
+          {grund&&<div style={{color:'var(--red)',marginBottom:3}}><strong>Grund:</strong> {grund}</div>}
+          Die KI-Bewertung konnte nicht erzeugt werden — die Bewertungszusammenfassung ist leer.
+          Das Hotel bleibt normal bearbeitbar; der nächste Analyselauf verarbeitet den Datensatz erneut.
+        </div>}
+        {meta&&meta.key==='entwurf'&&<div style={{fontSize:11,color:'#8A6D00',marginTop:6}}>
+          Der Datensatz liegt in der Hotel-Datenbank, ist aber noch nicht analysiert.
+        </div>}
       </div>;
     }
     // Default: Such-Button
@@ -682,10 +729,17 @@ function HotelSearchPanel({hi,state,trip,onStart,onPickDb,onSearchPlaces,onPickG
   if(phase==='db_results'){
     return <div style={{padding:10,background:'var(--beige-light)',borderRadius:6,fontSize:12}}>
       <div style={{fontWeight:700,marginBottom:6,color:'var(--sage-dark)'}}>📍 Aus WW-Datenbank ({state.dbResults.length}):</div>
-      {state.dbResults.map((m,i)=><div key={i} className="hcard" onClick={()=>onPickDb(hi,m)}>
-        <div style={{fontWeight:600}}>{m.hotel_name}</div>
-        <div style={{fontSize:11,color:'#666'}}>{m.hotel_ort}{m.hotel_land?', '+m.hotel_land:''} · ⭐ {m.google_rating||'—'} · <code>{m.hotel_id}</code></div>
-      </div>)}
+      {state.dbResults.map((m,i)=>{
+        // v0.18.4: `status` kommt bereits aus `Filter Hotel Search` (WF1) — kein Zusatz-Request.
+        const sm=hotelStatusMeta(m.status);
+        return <div key={i} className="hcard" onClick={()=>onPickDb(hi,m)}>
+          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <span style={{fontWeight:600}}>{m.hotel_name}</span>
+            {sm&&<span style={{fontSize:10,fontWeight:700,color:sm.fg,background:sm.bg,border:'1px solid '+sm.border,borderRadius:4,padding:'1px 6px'}}>{sm.icon} {sm.label}</span>}
+          </div>
+          <div style={{fontSize:11,color:'#666'}}>{m.hotel_ort}{m.hotel_land?', '+m.hotel_land:''} · ⭐ {m.google_rating||'—'} · <code>{m.hotel_id}</code></div>
+        </div>;
+      })}
       <div style={{marginTop:8,display:'flex',gap:8}}>
         <button onClick={()=>onSearchPlaces(hi,hotel.name,ortHint)} style={{background:'none',border:'1px dashed var(--sage)',borderRadius:6,padding:'4px 12px',color:'var(--sage)',cursor:'pointer',fontSize:11}}>Keiner passt — bei Google suchen</button>
         <button onClick={()=>onCancel(hi)} style={{background:'none',border:'1px solid #999',borderRadius:6,padding:'4px 12px',color:'#666',cursor:'pointer',fontSize:11}}>Abbrechen</button>
@@ -1439,6 +1493,17 @@ function App(){
   const[hotelSearch,setHotelSearch]=useState({});
   const setHS=useCallback((hi,patch)=>setHotelSearch(p=>({...p,[hi]:{...(p[hi]||{}),...patch}})),[]);
 
+  // v0.18.4 (Brief e→b 2026-07-22): Live-Status der Hotels-DB, keyed by hotel_id:
+  //   { [hotel_id]: {status:'analysiert'|'entwurf'|'analyse_fehler'|<unbekannt>, grund?:string} }
+  // Bewusst NICHT Teil von trip.hotels — sonst landet der Wert über hotels_pool_json im
+  // Entwurfs-Sheet und friert dort als Snapshot ein. Quellen: /hotel-single beim Laden
+  // eines Entwurfs, /hotel-search beim Übernehmen eines DB-Treffers.
+  const[hotelStatus,setHotelStatus]=useState({});
+  const setHotelStatusFor=useCallback((hotelId,info)=>{
+    if(!hotelId) return;
+    setHotelStatus(p=>({...p,[hotelId]:{...(p[hotelId]||{}),...info}}));
+  },[]);
+
   // ============== API HELPER ==============
   const apiCall=useCallback(async(method,path,body=null)=>{
     const headers={'Content-Type':'application/json'};
@@ -1528,25 +1593,41 @@ function App(){
         aktivitaeten:Array.isArray(t.aktivitaeten)&&t.aktivitaeten.length?t.aktivitaeten:[{name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]
       })));
     }
-    // Async wp_url-Refresh: für Hotels mit hotel_id aber leerem wp_url einmalig /hotel-single aufrufen.
-    // Fire-and-forget — UI wird nachträglich aktualisiert, blockiert nicht den Hauptpfad.
+    // Async Hotel-Refresh via /hotel-single. Fire-and-forget — UI wird nachträglich
+    // aktualisiert, blockiert nicht den Hauptpfad.
+    // v0.18.4 (Brief e→b 2026-07-22, F2=c): Filter von `hotel_id && !wp_url` auf `hotel_id`
+    // erweitert. Grund: `analyse_fehler` entsteht in WF5 NACH der Auswahl. Das betroffene
+    // Hotel hat i.d.R. bereits eine wp_url bzw. wäre vom alten Filter ausgeschlossen —
+    // der Fehler bliebe dem Whisperer dauerhaft unsichtbar (grüner Haken). Der Refresh
+    // liefert jetzt zusätzlich `status` und `grund` in den separaten hotelStatus-State.
     const hotelsRaw=safeJson(d.hotels_pool_json,[]);
-    const toRefresh=(Array.isArray(hotelsRaw)?hotelsRaw:[]).filter(h=>h&&h.hotel_id&&!h.wp_url);
+    const toRefresh=(Array.isArray(hotelsRaw)?hotelsRaw:[]).filter(h=>h&&h.hotel_id);
     if(toRefresh.length>0){
       (async()=>{
         const results=await Promise.all(toRefresh.map(h=>
           apiCall('GET',`/hotel-single?hotel_id=${encodeURIComponent(h.hotel_id)}`).catch(()=>null)
         ));
+        // 1) Status/Grund → eigener State (NICHT nach trip.hotels, siehe Kommentar bei hotelStatus)
+        const statusPatch={};
+        results.forEach((r,idx)=>{
+          if(r&&r.success&&r.hotel){
+            const targetId=toRefresh[idx].hotel_id;
+            statusPatch[targetId]={status:r.hotel.status||'',grund:r.hotel.grund||''};
+          }
+        });
+        if(Object.keys(statusPatch).length>0) setHotelStatus(p=>({...p,...statusPatch}));
+        // 2) wp_url-Nachtrag wie bisher — nur setzen, wenn im Entwurf noch leer.
         setTrip(p=>{
           const newHotels=[...p.hotels];
+          let changed=false;
           results.forEach((r,idx)=>{
             if(r&&r.success&&r.hotel&&r.hotel.wp_url){
               const targetId=toRefresh[idx].hotel_id;
               const i=newHotels.findIndex(h=>h.hotel_id===targetId);
-              if(i>=0) newHotels[i]={...newHotels[i],wp_url:r.hotel.wp_url};
+              if(i>=0&&!newHotels[i].wp_url){ newHotels[i]={...newHotels[i],wp_url:r.hotel.wp_url}; changed=true; }
             }
           });
-          return {...p,hotels:newHotels};
+          return changed?{...p,hotels:newHotels}:p;
         });
       })();
     }
@@ -1824,6 +1905,9 @@ function App(){
     const h=[...trip.hotels];
     h[hi]={...h[hi],hotel_id:match.hotel_id,name:match.hotel_name,adresse:h[hi].adresse||match.hotel_ort||'',wp_url:match.wp_url||''};
     setT('hotels',h);
+    // v0.18.4: Status des Treffers direkt übernehmen — sonst zeigt die Fertig-View bis zum
+    // nächsten Reload „grün", obwohl der DB-Datensatz auf analyse_fehler steht.
+    setHotelStatusFor(match.hotel_id,{status:match.status||'',grund:match.grund||''});
     setHS(hi,{phase:'done',dbResults:[],placesResults:[]});
   };
 
@@ -2455,7 +2539,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.3 (Tagesarten aktiv/inaktiv + Kalibrierungshinweis)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.4 (Hotel-Status analyse_fehler)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2716,6 +2800,7 @@ function App(){
                 hi={hi}
                 state={hotelSearch[hi]}
                 trip={trip}
+                statusInfo={hotel.hotel_id?hotelStatus[hotel.hotel_id]:null}
                 onStart={startHotelSearch}
                 onPickDb={pickDbHotel}
                 onSearchPlaces={searchPlaces}
