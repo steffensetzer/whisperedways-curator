@@ -1136,7 +1136,7 @@ function App(){
   // Status der Analyse: 'idle' | 'loading' | 'done' | 'error'
   // Vor Backend-Fertigstellung läuft die Funktion im MOCK-Modus (EMOTIONAL_ANALYSE_MOCK=true).
   // Sobald der Endpoint /webhook/reise-api/analyse-emotional bereitsteht, MOCK auf false setzen.
-  const EMOTIONAL_ANALYSE_MOCK=true;
+  const EMOTIONAL_ANALYSE_MOCK=false;
   const[analyseStatus,setAnalyseStatus]=useState('idle');
   const[analyseMsg,setAnalyseMsg]=useState('');
   const[showAnalyseConfirm,setShowAnalyseConfirm]=useState(false);
