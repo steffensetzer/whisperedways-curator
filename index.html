@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.18.7 (reise_id = Erstanlage-Provenienz; Status nach Dedup)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.0 (Bildquelle-Kaskade adobe,unsplash + Restaurant preis/charakter)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1095,8 +1095,9 @@ function App(){
     reise_format:'', reise_thema:[], reise_charakter:'',
     zielgruppe:[], tier:['pdf'], aktivitaets_level:'',
     mietwagen:'', mietwagen_details:'', flughafen_empfehlung:'',
-    // v0.17.0: Bildquelle pro Reise (Enum unsplash/adobe). Editierbar nur admin/curator_master.
-    image_source_priority:'unsplash',
+    // v0.17.0: Bildquelle pro Reise. Editierbar nur admin/curator_master.
+    // v0.19.0: Default = Komma-Kaskade 'adobe,unsplash' (Adobe primär, Unsplash Fallback; e-D49). Wirkt nur auf Neuanlagen (Bestandsschutz = Variante b).
+    image_source_priority:'adobe,unsplash',
     freitext_gesamtreise:'', persoenliche_erfahrung:'', magic_moment:'', sicherheitshinweise:'',
     trust_signale:[], empfohlene_monate:{},
     match: {pre_curation:3, pace:3, solitude_social:3, comfort:3, cultural_depth:3, activity_mode:3, authenticity:3},
@@ -2003,14 +2004,6 @@ function App(){
           if(dup&&dup.success&&dup.matches&&dup.matches.length>0){
             const m=dup.matches[0];
             const dupStatus=String(m.status==null?'':m.status).trim();
-            // v0.18.7 (BRIEF e→b 2026-07-24 §2, D23): Status UND grund des Dedup-Treffers in
-            // beiden Zweigen in den hotelStatus-State übernehmen — analog pickDbHotel (v0.18.4).
-            // Ohne das zeigt die Fertig-View bis zum nächsten Reload die neutrale grüne
-            // Alt-Ansicht, obwohl der DB-Datensatz einen abweichenden Status trägt.
-            // /hotel-search liefert `grund` seit 2026-07-24 mit (additiv, kein Kontraktbruch).
-            // Defensiv wie v0.18.4: fehlende Felder → '' → hotelStatusMeta()===null → Alt-Ansicht
-            // (kein Fragezeichen); unbekannte Statuswerte → Rohwert-Badge.
-            setHotelStatusFor(m.hotel_id,{status:m.status||'',grund:m.grund||''});
             if(dupStatus==='analyse_fehler'&&m.hotel_id){
               retryHotelId=m.hotel_id;
               retryHotelName=m.hotel_name||'';
@@ -2064,12 +2057,7 @@ function App(){
             hotel_land:cc,
             hotel_plz:plz,
             user_id:currentUserId,
-            // v0.18.7 (BRIEF e→b 2026-07-24 §1, D22): Erstanlage-PROVENIENZ, keine Zuordnung.
-            // Das Feld dokumentiert, aus welchem Entwurf heraus die Hotelzeile erstmals angelegt
-            // wurde. Die n:m-Wahrheit Hotel ↔ Reise liegt auf der Reise-Seite (hotels_pool_json)
-            // und darf NICHT aus diesem Feld abgeleitet werden. Feldname bleibt `reise_id`
-            // (Kontrakt unverändert, kein Schema-Change).
-            reise_id:entwurfId||''
+            reise_id:''
           });
         }catch(stubErr){
           console.warn('Hotel-Stub konnte nicht angelegt werden, fahre trotzdem mit Analyse fort:',stubErr.message);
@@ -2084,13 +2072,11 @@ function App(){
         hotel_plz:plz,
         google_place_id:cand.google_place_id,
         user_id:currentUserId,
-        // v0.18.7 (BRIEF e→b 2026-07-24 §1, D22): Erstanlage-PROVENIENZ, keine Zuordnung.
-        // Eine echte `reise_id` existiert zum Zeitpunkt der Hotel-Analyse nicht (sie wird erst
-        // von /generate vergeben). e hat den Zuordnungsanspruch des Feldes aufgegeben: gesendet
-        // wird die aktuelle entwurf_id als Herkunftsnachweis der Erstanlage. Feldname bleibt
-        // `reise_id` (Kontrakt unverändert, kein Schema-Change); die Zuordnung Hotel ↔ Reise
-        // bleibt ausschließlich reise-seitig in hotels_pool_json.
-        reise_id:entwurfId||''
+        // v0.18.6 (BRIEF e→b 2026-07-23 §2): bleibt vorerst leer. Eine `reise_id` existiert zum
+        // Zeitpunkt der Hotel-Analyse strukturell noch nicht (sie wird erst von /generate
+        // vergeben); der einzige verfügbare Bezug wäre `entwurf_id`. Kontraktfrage → e-Entscheid,
+        // deshalb hier bewusst KEIN stiller Workaround.
+        reise_id:''
       };
       // Fire-and-forget — User kann weiterarbeiten während WF5 läuft
       apiCall('POST','/hotel-analyse',payload).then(r=>{
@@ -2661,7 +2647,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.18.7 (reise_id = Erstanlage-Provenienz; Status nach Dedup)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.0 (Bildquelle-Kaskade adobe,unsplash + Restaurant preis/charakter)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2941,11 +2927,12 @@ function App(){
           <Field label="Bildquelle (Generierung)" badge={canManage?'ADMIN':'INFO'} hint={canManage?'Bestimmt die Bildquelle für die Generierung dieser Reise.':'Wird von Admin/Master gesetzt.'}>
             <Radio
               name="image_source_priority"
-              value={trip.image_source_priority||'unsplash'}
+              value={trip.image_source_priority||'adobe,unsplash'}
               onChange={v=>setT('image_source_priority',v)}
               options={[
-                {value:'unsplash',label:'Unsplash',disabled:!canManage},
-                {value:'adobe',label:'Adobe Stock',disabled:!canManage}
+                {value:'adobe,unsplash',label:'Adobe → Unsplash (Fallback)',disabled:!canManage},
+                {value:'unsplash',label:'Nur Unsplash',disabled:!canManage},
+                {value:'adobe',label:'Nur Adobe Stock',disabled:!canManage}
               ]}
             />
           </Field>
@@ -3255,6 +3242,11 @@ function App(){
                       <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
                         <Field label="Mahlzeit/Anlass" badge="EMPFOHLEN" half><Sel options={['Frühstück','Mittag','Abend','Snack/Café','Drinks/Bar']} value={r.mahlzeit} onChange={v=>updateRest(ti,ri,'mahlzeit',v)}/></Field>
                         <Field label="Adresse" badge="OPTIONAL" half><TI placeholder="Adresse oder Maps-Link" value={r.adresse} onChange={v=>updateRest(ti,ri,'adresse',v)}/></Field>
+                      </div>
+                      {/* v0.19.0: Kurator-Fakten preis/charakter (Freitext, optional). Feld bereits im Datenmodell + buildPayload-Allowlist; WF7 konsumiert sie als Kurator-Fakten mit Vorrang. */}
+                      <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
+                        <Field label="Preis (pro Person)" badge="OPTIONAL" half><TI placeholder="z.B. 25–35 € p.P." value={r.preis} onChange={v=>updateRest(ti,ri,'preis',v)}/></Field>
+                        <Field label="Charakter" badge="OPTIONAL" half><TI placeholder="z.B. rustikal, familiär, gehoben" value={r.charakter} onChange={v=>updateRest(ti,ri,'charakter',v)}/></Field>
                       </div>
                       <Field label="Warum diese Empfehlung? (F4)" badge="EMPFOHLEN"><TA placeholder="Stichworte: Warum empfehlen, Reservierung, Sitzplatz..." rows={2} value={r.warum} onChange={v=>updateRest(ti,ri,'warum',v)}/></Field>
                     </SubItemRow>;
