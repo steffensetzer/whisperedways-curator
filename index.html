@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.0 (Bildquelle-Kaskade adobe,unsplash + Restaurant preis/charakter)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.1 (anzahl_tage abgeleitet aus tage.length)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1090,7 +1090,7 @@ function App(){
     }catch{return genId();}
   });
   const[trip,setTrip]=useState({
-    reise_ort:'', anzahl_tage:'', destination:'',
+    reise_ort:'', destination:'',
     region_sub:'', region_land:'',
     reise_format:'', reise_thema:[], reise_charakter:'',
     zielgruppe:[], tier:['pdf'], aktivitaets_level:'',
@@ -1606,7 +1606,6 @@ function App(){
       return {
         ...p,
         reise_ort:params.reise_ort||p.reise_ort,
-        anzahl_tage:String(params.anzahl_tage||p.anzahl_tage||''),
         reise_format:d.reise_format||p.reise_format,
         reise_thema:safeJson(d.reise_thema,p.reise_thema),
         reise_charakter:d.reise_charakter||p.reise_charakter,
@@ -2133,7 +2132,7 @@ function App(){
   const buildPayload=()=>{
     const params={
       reise_ort:trip.reise_ort,
-      anzahl_tage:parseInt(trip.anzahl_tage)||0,
+      anzahl_tage:tage.length,
       zielgruppen_alter:'',positionierung:'',
       unterkunft_global:trip.hotels[0]?.name||'',
       faq_seeds:'',
@@ -2166,7 +2165,7 @@ function App(){
         aktivitaeten:t.aktivitaeten.filter(a=>a.name).map(a=>({position:Number(a.position)||0,name:a.name,anbieter:a.anbieter,adresse:a.adresse,telefon:a.telefon,insider_tipps:a.insider_tipps}))
       }))
     };
-    const quelltext=`ReiseOrt: ${trip.reise_ort}\nReiseTage: ${trip.anzahl_tage}\nFormat: ${trip.reise_format}\nCharakter: ${trip.reise_charakter}`;
+    const quelltext=`ReiseOrt: ${trip.reise_ort}\nReiseTage: ${tage.length}\nFormat: ${trip.reise_format}\nCharakter: ${trip.reise_charakter}`;
     const taxonomienOut={
       region_subregion:trip.region_sub,
       region_land:trip.region_land,
@@ -2188,7 +2187,7 @@ function App(){
       // v0.12: Status bei jedem Save mitsenden — sonst lässt Backend die Spalte leer (Backend-Code:
       // `if (data.status !== undefined) out.status = data.status`). Default beim neuen Entwurf ist 'entwurf'.
       status:tripStatus||'entwurf',
-      anzahl_tage:parseInt(trip.anzahl_tage)||0,
+      anzahl_tage:tage.length,
       quelltext,
       params,
       taxonomien:taxonomienOut,
@@ -2258,13 +2257,13 @@ function App(){
 
   // ============== v0.12: PFLICHTFELD-VALIDIERUNG VOR ÜBERGABE ==============
   // Pflichtfelder beim Status-Wechsel entwurf → übergeben:
-  //   Trip: reise_ort, anzahl_tage, region_land, reise_format
+  //   Trip: reise_ort, region_land, reise_format; mind. 1 Reisetag (Tage-Tab)
   //   Whisperer: vorname, nachname, email
   // Andere Felder bleiben optional. Tagesplanung/Hotel-Pool ebenfalls optional.
   const validateForTransfer=()=>{
     const missing=[];
     if(!trip.reise_ort||!trip.reise_ort.trim()) missing.push('Titel/Destination (Trip-Tab)');
-    if(!trip.anzahl_tage||!String(trip.anzahl_tage).trim()) missing.push('Anzahl Reisetage (Trip-Tab)');
+    if(!tage.length) missing.push('Mindestens ein Reisetag (Tage-Tab)');
     if(!trip.region_land||!trip.region_land.trim()) missing.push('Land (Trip-Tab)');
     if(!trip.reise_format||!trip.reise_format.trim()) missing.push('Reise-Format (Trip-Tab)');
     // v0.13: Bug-Fix — Whisperer-Profil muss tatsächlich in der DB existieren, nicht nur im UI-State.
@@ -2647,7 +2646,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.0 (Bildquelle-Kaskade adobe,unsplash + Restaurant preis/charakter)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.1 (anzahl_tage abgeleitet aus tage.length)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2880,7 +2879,6 @@ function App(){
             <Field label="Land" badge="PFLICHT" half hint={trip.region_land?`Country-Code: ${getCountryCodeForLand()||'—'}`:''}><Sel options={taxRegionLand} value={trip.region_land} onChange={v=>setT('region_land',v)}/></Field>
           </div>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-            <Field label="Anzahl Reisetage" badge="PFLICHT" half><TI placeholder="z.B. 8" value={trip.anzahl_tage} onChange={v=>setT('anzahl_tage',v)}/></Field>
             <Field label="Anreise" badge="EMPFOHLEN" half><MC options={['Flug','Pkw','Bahn','Schiff','Eigene']} value={trip.anreise} onChange={v=>setT('anreise',v)} columns={3}/></Field>
           </div>
           <Field label="Empfohlene Reisemonate" badge="PFLICHT" hint="1. Klick = Grün (Toll), 2. Klick = Gelb (OK), 3. Klick = Rot (Nicht empfohlen)"><MonthSel value={trip.empfohlene_monate} onChange={v=>setT('empfohlene_monate',v)}/></Field>
