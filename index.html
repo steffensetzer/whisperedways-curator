@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.1 (anzahl_tage abgeleitet aus tage.length)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.2 (Tagesort-Feld S-1 + Ort-Profil-Toggle S-2)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -432,7 +432,7 @@ function InsiderField({title,number,hint,placeholder,rows=4,value,onChange}){
 // - Klick auf den Header-Bereich (außer Input und Buttons) klappt Details auf/zu.
 // - Buttons stoppen Click-Propagation, damit das Aufklappen nicht ausgelöst wird.
 // - Detail-Felder (children) erscheinen unten, nur wenn open === true.
-function SubItemRow({label,icon,namePlaceholder,nameValue,onNameChange,accent='var(--sage)',accentBg='var(--beige-light)',accentBorder='var(--sage-light)',open,onToggle,onMoveUp,onMoveDown,onRemove,canMoveUp,canMoveDown,children}){
+function SubItemRow({label,icon,namePlaceholder,nameValue,onNameChange,accent='var(--sage)',accentBg='var(--beige-light)',accentBorder='var(--sage-light)',open,onToggle,onMoveUp,onMoveDown,onRemove,canMoveUp,canMoveDown,badge,children}){
   // Stop click on inner controls so they don't toggle the row.
   const stop=(e)=>e.stopPropagation();
   const btn=(disabled)=>({
@@ -452,6 +452,7 @@ function SubItemRow({label,icon,namePlaceholder,nameValue,onNameChange,accent='v
       <span style={{fontSize:14,color:accent,width:14,textAlign:'center',flexShrink:0}}>{open?'▾':'▸'}</span>
       {icon&&<span style={{fontSize:15,flexShrink:0,lineHeight:1}}>{icon}</span>}
       <span style={{fontSize:12,fontWeight:700,color:accent,whiteSpace:'nowrap',flexShrink:0}}>{label}:</span>
+      {badge}
       <input
         onClick={stop}
         type="text"
@@ -1307,15 +1308,18 @@ function App(){
   // Backend bleibt unverändert: drei Arrays (stopps/restaurants/aktivitaeten), das position-Feld
   // wird einfach mit jedem Item mitgespeichert (additives Schema, keine Migration nötig).
   const[tage,setTage]=useState([
-    {tag_nummer:1, tag_typ:'', tag_titel:'', tag_start:'', tag_story:'', hotel_ref:'A', zimmer_tipp:'',
-     stopps:[{position:1,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:''}],
+    {tag_nummer:1, tag_typ:'', tag_titel:'', tag_start:'', tag_story:'', tagesort:'', hotel_ref:'A', zimmer_tipp:'',
+     stopps:[{position:1,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
      restaurants:[{position:2,name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
      aktivitaeten:[{position:3,name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]
     }
   ]);
   // v0.14.3: Sub-Item-Open-State im Akkordeon-Modus — pro Tag ist immer max. ein Item offen.
   // Schema: openItem[tagIdx] = {type:'stopp'|'food'|'akt', idx:Number} | null/undefined
-  const[openItem,setOpenItem]=useState({});
+  // v0.19.2: Default = erstes Sub-Item von Tag 1 offen, damit die Tagesablauf-Detailfelder
+  // (Adresse, Insider-Tipps …) beim ersten Öffnen nicht übersehen werden. Weitere Tage klappen
+  // ihr erstes Item beim manuellen Öffnen auf (siehe toggleOpen).
+  const[openItem,setOpenItem]=useState({0:{type:'stopp',idx:0}});
 
   // v0.14.2: Helper — prüft ob ein Sub-Item leer ist (kein Confirm-Dialog beim Löschen).
   const isItemEmpty=(item)=>!item||Object.values(item).every(v=>!v||(Array.isArray(v)&&v.length===0));
@@ -1408,8 +1412,8 @@ function App(){
   // === TAG ===
   const updateTag=(idx,key,val)=>setTage(p=>{const n=[...p];n[idx]={...n[idx],[key]:val};return n;});
   const addTag=()=>{
-    const newTag={tag_nummer:tage.length+1,tag_typ:'',tag_titel:'',tag_start:'',tag_story:'',hotel_ref:'A',zimmer_tipp:'',
-      stopps:[{position:1,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:''}],
+    const newTag={tag_nummer:tage.length+1,tag_typ:'',tag_titel:'',tag_start:'',tag_story:'',tagesort:'',hotel_ref:'A',zimmer_tipp:'',
+      stopps:[{position:1,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
       restaurants:[{position:2,name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
       aktivitaeten:[{position:3,name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]};
     setTage(p=>renumberTage([...p,newTag]));
@@ -1464,7 +1468,7 @@ function App(){
   const addStopp=(tagIdx)=>{
     const newIdx=(tage[tagIdx]?.stopps?.length)||0;
     const pos=maxPosition(tage[tagIdx])+1;
-    setTage(p=>{const n=[...p];n[tagIdx]={...n[tagIdx],stopps:[...n[tagIdx].stopps,{position:pos,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:''}]};return n;});
+    setTage(p=>{const n=[...p];n[tagIdx]={...n[tagIdx],stopps:[...n[tagIdx].stopps,{position:pos,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}]};return n;});
     setOpenItem(o=>({...o,[tagIdx]:{type:'stopp',idx:newIdx}}));
   };
   const removeStopp=(tagIdx,stoppIdx)=>{
@@ -1640,18 +1644,25 @@ function App(){
       // v0.14.3: ensurePositions vergibt position-Werte für Sub-Items aus alten Reisen,
       // die noch ohne position-Feld gespeichert wurden. Reihenfolge: Stopps zuerst, dann
       // Food, dann Aktivitäten — entspricht der heutigen Anzeige-Reihenfolge.
-      setTage(params.tage.map((t,i)=>ensurePositions({
+      // v0.19.2: tagesort (S-1) additiv durchreichen; ort_profil (S-2) im Stopp-Stub. Beide
+      // Felder sind additiv — bestehende Stopps ohne ort_profil bleiben unverändert (Bestandsschutz).
+      const mappedTage=params.tage.map((t,i)=>ensurePositions({
         tag_nummer:t.tag_nummer||i+1,
         tag_typ:t.tag_typ||'',
         tag_titel:t.tag_ort||t.tag_titel||'',
         tag_start:t.tag_start||'',
         tag_story:t.tag_story||t.tag_beschreibung||'',
+        tagesort:t.tagesort||'',
         hotel_ref:t.hotel_ref||'A',
         zimmer_tipp:t.zimmer_tipp||'',
-        stopps:Array.isArray(t.stopps)&&t.stopps.length?t.stopps:[{name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:''}],
+        stopps:Array.isArray(t.stopps)&&t.stopps.length?t.stopps:[{name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
         restaurants:Array.isArray(t.restaurants)&&t.restaurants.length?t.restaurants:[{name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
         aktivitaeten:Array.isArray(t.aktivitaeten)&&t.aktivitaeten.length?t.aktivitaeten:[{name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]
-      })));
+      }));
+      setTage(mappedTage);
+      // v0.19.2 (Schönheit): erstes Sub-Item von Tag 1 des geladenen Entwurfs vorab aufklappen.
+      const first0=getSortedSchedule(mappedTage[0])[0];
+      setOpenItem(first0?{0:{type:first0.type,idx:first0.idx}}:{});
     }
     // Async Hotel-Refresh via /hotel-single. Fire-and-forget — UI wird nachträglich
     // aktualisiert, blockiert nicht den Hauptpfad.
@@ -2155,12 +2166,16 @@ function App(){
         namen_pflicht:t.stopps.map(s=>s.name).filter(Boolean).join(', '),
         tag_start:t.tag_start||'',
         tag_story:t.tag_story||'',
+        // v0.19.2 (S-1): additives Tagesort-Feld je Tag (Ortschaft, in der der Tag spielt).
+        // Freitext, leer erlaubt, nur getrimmt. Backend fällt bei leer auf reise_ort zurück.
+        tagesort:(t.tagesort||'').trim(),
         hotel_ref:t.hotel_ref||'A',
         zimmer_tipp:t.zimmer_tipp||'',
         // v0.14.3: position-Feld wird mitgespeichert, damit der gemischte Tagesablauf beim Reload
         // korrekt wiederhergestellt werden kann (Stopp ↔ Food ↔ Aktivität gemischt nach position).
         // Backend-Schema bleibt unverändert — position ist additiv und wird vom WF1-Resource-Mapper transparent durchgereicht.
-        stopps:t.stopps.filter(s=>s.name).map(s=>({position:Number(s.position)||0,name:s.name,adresse:s.adresse,uhrzeit:s.uhrzeit,dauer:s.dauer,besonderheit:s.besonderheit,insider_tipps:s.insider_tipps})),
+        // v0.19.2 (S-2): ort_profil additiv in der Stopp-Allowlist — Default false, nur explizit true zählt (WF10-Anker).
+        stopps:t.stopps.filter(s=>s.name).map(s=>({position:Number(s.position)||0,name:s.name,adresse:s.adresse,uhrzeit:s.uhrzeit,dauer:s.dauer,besonderheit:s.besonderheit,insider_tipps:s.insider_tipps,ort_profil:!!s.ort_profil})),
         restaurants:t.restaurants.filter(r=>r.name).map(r=>({position:Number(r.position)||0,name:r.name,mahlzeit:r.mahlzeit,charakter:r.charakter,preis:r.preis,adresse:r.adresse,telefon:r.telefon,warum:r.warum})),
         aktivitaeten:t.aktivitaeten.filter(a=>a.name).map(a=>({position:Number(a.position)||0,name:a.name,anbieter:a.anbieter,adresse:a.adresse,telefon:a.telefon,insider_tipps:a.insider_tipps}))
       }))
@@ -2646,7 +2661,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.1 (anzahl_tage abgeleitet aus tage.length)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.2 (Tagesort-Feld S-1 + Ort-Profil-Toggle S-2)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3131,7 +3146,19 @@ function App(){
         </div>
         {tage.map((tag,ti)=>{
           const open=openTags[ti]||false;
-          const toggleOpen=()=>setOpenTags(p=>({...p,[ti]:!p[ti]}));
+          // v0.19.2 (Schönheit): beim Aufklappen eines Tages das erste Sub-Item öffnen, falls noch
+          // keins offen ist — sonst werden die Tagesablauf-Detailfelder leicht übersehen.
+          const toggleOpen=()=>{
+            const willOpen=!open;
+            setOpenTags(p=>({...p,[ti]:willOpen}));
+            if(willOpen){
+              setOpenItem(o=>{
+                if(o[ti])return o;
+                const first=getSortedSchedule(tage[ti])[0];
+                return first?{...o,[ti]:{type:first.type,idx:first.idx}}:o;
+              });
+            }
+          };
           // v0.14.2: Stop-Propagation für Header-Buttons, damit Klicks auf ↑↓✕ den Tag nicht zuklappen.
           const stop=(e)=>e.stopPropagation();
           const headerBtn=(disabled)=>({
@@ -3161,6 +3188,10 @@ function App(){
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
                 <Field label="Tag-Typ" badge="PFLICHT" half><Sel options={tagTypenOptsFor(tag.tag_typ)} value={tag.tag_typ} onChange={v=>updateTag(ti,'tag_typ',v)}/></Field>
                 <Field label="Tag-Titel" badge="EMPFOHLEN" half><TI placeholder="z.B. Die weißen Dörfer" value={tag.tag_titel} onChange={v=>updateTag(ti,'tag_titel',v)}/></Field>
+              </div>
+              {/* v0.19.2 (S-1): optionales Tagesort-Feld — Ortschaft, in der der Tag spielt (WF10-Input-Anker). */}
+              <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
+                <Field label="Tagesort (Ortschaft)" badge="OPTIONAL" half info="tagesort"><TI placeholder="z.B. Meersburg" value={tag.tagesort} onChange={v=>updateTag(ti,'tagesort',v)}/></Field>
               </div>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
                 <Field label="Empf. Tagesstart" badge="EMPFOHLEN" half><TI placeholder="z.B. ca. 14:00" value={tag.tag_start} onChange={v=>updateTag(ti,'tag_start',v)}/></Field>
@@ -3208,7 +3239,16 @@ function App(){
                       onRemove={()=>removeStopp(ti,si)}
                       canMoveUp={canUp}
                       canMoveDown={canDown}
+                      badge={s.ort_profil?<span title="Als Ort ins Reiseprofil aufgenommen" style={{fontSize:10,fontWeight:700,color:'var(--white)',background:'var(--coral)',padding:'1px 6px',borderRadius:4,whiteSpace:'nowrap',flexShrink:0,lineHeight:1.6}}>Ort</span>:null}
                     >
+                      {/* v0.19.2 (S-2): Ort-Profil-Toggle — markierte Stopps bekommen ein eigenes Ort-Profil (WF10). Ablauf-Stopps nicht markieren. */}
+                      <div style={{marginBottom:12}}>
+                        <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                          <input type="checkbox" checked={!!s.ort_profil} onChange={e=>updateStopp(ti,si,'ort_profil',e.target.checked)} style={{width:16,height:16,flexShrink:0,cursor:'pointer'}}/>
+                          <span>Als Ort ins Reiseprofil aufnehmen</span>
+                          <InfoI feldKey="ort_profil"/>
+                        </label>
+                      </div>
                       <Field label="Adresse/Maps" badge="EMPFOHLEN"><TI placeholder="Adresse oder Maps-Link" value={s.adresse} onChange={v=>updateStopp(ti,si,'adresse',v)}/></Field>
                       <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
                         <Field label="Uhrzeit" badge="OPTIONAL" half><TI placeholder="z.B. 09:00" value={s.uhrzeit} onChange={v=>updateStopp(ti,si,'uhrzeit',v)}/></Field>
