@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.3 (Hotel-Zuordnung ref-stabil, L-WW-92)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.4 (L-WW-91 whisperer_id/created_at + L-WW-96 Pflichtfelder)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1093,6 +1093,11 @@ function App(){
       return p.get('entwurf_id')?'':genId();
     }catch{return genId();}
   });
+  // v0.19.4 (B-2, L-WW-91): Erst-Save/Update-Unterscheidung für created_at.
+  // false = Entwurf noch nicht im Backend persistiert (Neuanlage) → created_at MITSENDEN (Create).
+  // true  = bereits persistiert (nach erstem Save ODER nach hydrateFromDraft) → created_at WEGLASSEN,
+  //         damit WF1 den Erstellungszeitpunkt nicht überschreibt (Schutz greift nur bei fehlendem Feld).
+  const[draftPersisted,setDraftPersisted]=useState(false);
   const[trip,setTrip]=useState({
     reise_ort:'', destination:'',
     region_sub:'', region_land:'',
@@ -1606,6 +1611,8 @@ function App(){
   // ============== HYDRATE FROM DRAFT ==============
   const hydrateFromDraft=useCallback((d)=>{
     setEntwurfId(d.entwurf_id);
+    // v0.19.4 (B-2): geladener Entwurf existiert im Backend → alle folgenden Saves sind Updates.
+    setDraftPersisted(true);
     // v0.12: Status + Reject-Comment aus DB übernehmen. Backend liefert ggf. 'draft' (alt) → wir
     // halten den Wert 1:1 im State; STATUS_LABELS/STATUS_COLORS behandeln 'draft' als Alias für 'entwurf'.
     setTripStatus(d.status||'entwurf');
@@ -2211,7 +2218,9 @@ function App(){
     const hotelsToSave=trip.hotels.filter(h=>h.name||h.hotel_id);
     return {
       entwurf_id:entwurfId,
-      created_at:new Date().toISOString(),
+      // v0.19.4 (B-2, L-WW-91): nur beim Erst-Save (nicht persistiert) mitsenden. Bei Updates
+      // undefined → JSON.stringify verwirft das Feld → WF1 behält den bestehenden created_at.
+      created_at:draftPersisted?undefined:new Date().toISOString(),
       // v0.12: Status bei jedem Save mitsenden — sonst lässt Backend die Spalte leer (Backend-Code:
       // `if (data.status !== undefined) out.status = data.status`). Default beim neuen Entwurf ist 'entwurf'.
       status:tripStatus||'entwurf',
@@ -2224,7 +2233,11 @@ function App(){
       image_source_priority:(trip.image_source_priority||'unsplash'),
       user_id:currentUserId,
       user_name:currentUserName,
-      whisperer_id:currentUserId,
+      // v0.19.4 (B-1, L-WW-91): whisperer_id ist die Referenz auf das gespeicherte Whisperer-PROFIL
+      // der Reise (Spec Reisen_Roh v2 §3.1), NICHT der Session-User. Quelle: whisperer.whisperer_id,
+      // gesetzt nach erfolgreichem /whisperer-load bzw. /whisperer-save. Ohne gespeichertes Profil
+      // (leer) → Feld weglassen (undefined), damit NICHT wieder der Session-User einläuft.
+      whisperer_id:(whisperer.whisperer_id||'').trim()||undefined,
       reise_format:trip.reise_format,
       reise_thema:trip.reise_thema,
       reise_charakter:trip.reise_charakter,
@@ -2266,6 +2279,7 @@ function App(){
       if(data.error){setSaveStatus('error');setSaveMsg('Fehler: '+data.error);}
       else{
         setSaveStatus('success');
+        setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
         setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId);
         // URL aktualisieren für Refresh-Sicherheit
         const newUrl=window.location.pathname+'?entwurf_id='+encodeURIComponent(entwurfId);
@@ -2315,6 +2329,33 @@ function App(){
     if(!whisperer.vorname||!whisperer.vorname.trim()) missing.push('Vorname (Whisperer-Tab)');
     if(!whisperer.nachname||!whisperer.nachname.trim()) missing.push('Nachname (Whisperer-Tab)');
     if(!whisperer.email||!whisperer.email.trim()) missing.push('E-Mail (Whisperer-Tab)');
+    // ===== v0.19.4: L-WW-96 (e-D63) — additive Pflichtfelder gegen inhaltlich leere Reisen =====
+    // 4.1 Mindestens EIN Tag mit Inhalt (nicht nur Tageszahl ≥ 1). Feinschnitt (b, dokumentiert):
+    //     „mit Inhalt" = tag_story (getrimmt) gefüllt ODER ≥1 benanntes Objekt (Stopp/Restaurant/
+    //     Aktivität). tag_titel allein zählt bewusst NICHT (Brief nennt nur story/beschreibung/Objekt;
+    //     im UI-State gibt es kein separates tag_beschreibung, nur tag_story).
+    const hasDayContent=tage.some(t=>
+      (t.tag_story||'').trim()
+      || (t.stopps||[]).some(s=>s&&(s.name||'').trim())
+      || (t.restaurants||[]).some(r=>r&&(r.name||'').trim())
+      || (t.aktivitaeten||[]).some(a=>a&&(a.name||'').trim())
+    );
+    if(tage.length&&!hasDayContent) missing.push('Mindestens ein Tag mit Inhalt — Tages-Story oder ein Stopp/Restaurant/Aktivität (Tage-Tab)');
+    // 4.2 reise_thema und zielgruppe nicht leer (beide Multi-Select, im UI bereits PFLICHT-gebadgt).
+    const emptyMulti=v=>!v||(Array.isArray(v)?v.length===0:!String(v).trim());
+    if(emptyMulti(trip.reise_thema)) missing.push('Reise-Thema (Trip-Tab)');
+    if(emptyMulti(trip.zielgruppe)) missing.push('Zielgruppe (Trip-Tab)');
+    // 4.3 Paar-Konsistenz hotel_ref ↔ hotels_pool_json — Variante b (e-Entscheid 2026-08-01,
+    //     materialitätsbezogen): Pool = tatsächlich gespeicherte Hotels (name||hotel_id). Blockade NUR
+    //     bei NICHT-leerem Pool, wenn ein Tag eine hotel_ref trägt, die im Pool fehlt (Dangling-Ref,
+    //     z. B. nach Hotel-Löschung). Leerer Pool = hotellose Reise: das inerte Default-'A' zählt als
+    //     „kein Hotel" → KEINE Blockade (bewusste Abweichung vom Brief-Wortlaut „Pool leer → Blockade").
+    const poolRefs=trip.hotels.filter(h=>h.name||h.hotel_id).map(h=>h.ref);
+    if(poolRefs.length>0){
+      const dangling=tage.filter(t=>t.hotel_ref&&!poolRefs.includes(t.hotel_ref)).map(t=>t.tag_nummer);
+      if(dangling.length>0) missing.push('Hotel-Zuordnung ungültig an Tag '+dangling.join(', ')+' — verweist auf ein nicht (mehr) im Pool vorhandenes Hotel (Hotel-/Tage-Tab prüfen)');
+    }
+    // 4.4 region_land bleibt Pflicht (bereits oben geprüft).
     return missing;
   };
 
@@ -2354,6 +2395,7 @@ function App(){
         setTimeout(()=>setTransferStatus(null),8000);
         return;
       }
+      setDraftPersisted(true);  // v0.19.4 (B-2): Transfer-Save persistiert ebenfalls
       // 2) Status-Wechsel (ASCII-Kontrakt: new_status='uebergeben')
       setTransferMsg('Übergebe an Master/Admin…');
       const statusRes=await apiCall('POST','/update-status',{
@@ -2689,7 +2731,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.3 (Hotel-Zuordnung ref-stabil, L-WW-92)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.4 (L-WW-91 whisperer_id/created_at + L-WW-96 Pflichtfelder)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
