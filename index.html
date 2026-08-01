@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.2 (Tagesort-Feld S-1 + Ort-Profil-Toggle S-2)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.3 (Hotel-Zuordnung ref-stabil, L-WW-92)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1048,6 +1048,9 @@ function App(){
   const[rejectComment,setRejectComment]=useState('');
   const[transferStatus,setTransferStatus]=useState(null);
   const[transferMsg,setTransferMsg]=useState('');
+  // v0.19.3 (Punkt 2): sichtbare Blockade-Meldung beim Übergeben — ersetzt den flüchtigen alert
+  // und macht den bisher stillen disabled-Fall (!entwurfId → „gar nichts") als Text sichtbar.
+  const[transferBlock,setTransferBlock]=useState(null);  // null | string[] (Liste fehlender Pflichtfelder / Hinweise)
   // === v0.12: Lade-Modal (Liste eigener / aller Reisen) ===
   const[showLoadModal,setShowLoadModal]=useState(false);
   const[loadList,setLoadList]=useState([]);
@@ -1556,7 +1559,11 @@ function App(){
 
   // HOTEL-SUCHE STATE
   const[hotelSearch,setHotelSearch]=useState({});
-  const setHS=useCallback((hi,patch)=>setHotelSearch(p=>({...p,[hi]:{...(p[hi]||{}),...patch}})),[]);
+  // v0.19.3 (L-WW-92): hotelSearch wird nach stabiler Hotel-`ref` gekeyt, NICHT nach Array-Index.
+  // Grund: Beim Löschen eines Hotels oberhalb rücken die Indizes nach — ein index-gekeyter
+  // Such-/Analysezustand hängt danach an der falschen Zeile. `ref` (A/B/C…) ist stabil und
+  // eindeutig (nextHotelRef vergibt freie Buchstaben, ref wird nie mutiert).
+  const setHS=useCallback((key,patch)=>setHotelSearch(p=>({...p,[key]:{...(p[key]||{}),...patch}})),[]);
 
   // v0.18.4 (Brief e→b 2026-07-22): Live-Status der Hotels-DB, keyed by hotel_id:
   //   { [hotel_id]: {status:'analysiert'|'entwurf'|'analyse_fehler'|<unbekannt>, grund?:string} }
@@ -1942,54 +1949,58 @@ function App(){
   // ============== HOTEL-SUCHE LOGIK ==============
   const startHotelSearch=async(hi)=>{
     const hotel=trip.hotels[hi];
+    const ref=hotel?.ref;
     const q=(hotel.name||'').trim();
-    if(!q){setHS(hi,{phase:'error',error:'Bitte zuerst Hotel-Namen eingeben'});return;}
+    if(!q){setHS(ref,{phase:'error',error:'Bitte zuerst Hotel-Namen eingeben'});return;}
     const cc=getCountryCodeForLand();
     const ortHint=trip.region_land?(taxRegionLand.find(o=>o.value===trip.region_land)?.label||''):'';
-    setHS(hi,{phase:'searching_db',error:'',dbResults:[],placesResults:[]});
+    setHS(ref,{phase:'searching_db',error:'',dbResults:[],placesResults:[]});
     try{
       // hotel_land = Country-Code (z.B. "DE") für DB-Filter
       // hotel_ort wird leer gelassen — wir kennen die Stadt zu diesem Zeitpunkt nicht
       // ortHint (Land-Label) geht nur an Google-Places-Suche als Geo-Bias
       const r=await apiCall('GET',`/hotel-search?hotel_name=${encodeURIComponent(q)}&hotel_land=${encodeURIComponent(cc||'')}`);
       if(r.success&&r.matches&&r.matches.length>0){
-        setHS(hi,{phase:'db_results',dbResults:r.matches});
+        setHS(ref,{phase:'db_results',dbResults:r.matches});
       }else{
         await searchPlaces(hi,q,ortHint);
       }
-    }catch(e){setHS(hi,{phase:'error',error:e.message});}
+    }catch(e){setHS(ref,{phase:'error',error:e.message});}
   };
 
   const searchPlaces=async(hi,name,ortHint)=>{
-    setHS(hi,{phase:'searching_places'});
+    const ref=trip.hotels[hi]?.ref;
+    setHS(ref,{phase:'searching_places'});
     try{
       const r=await apiCall('GET',`/hotel-places-search?hotel_name=${encodeURIComponent(name)}&hotel_ort=${encodeURIComponent(ortHint||'')}`);
       if(r.success&&r.candidates&&r.candidates.length>0){
-        setHS(hi,{phase:'places_results',placesResults:r.candidates});
+        setHS(ref,{phase:'places_results',placesResults:r.candidates});
       }else{
-        setHS(hi,{phase:'no_results'});
+        setHS(ref,{phase:'no_results'});
       }
-    }catch(e){setHS(hi,{phase:'error',error:e.message});}
+    }catch(e){setHS(ref,{phase:'error',error:e.message});}
   };
 
   const pickDbHotel=(hi,match)=>{
+    const ref=trip.hotels[hi]?.ref;
     const h=[...trip.hotels];
     h[hi]={...h[hi],hotel_id:match.hotel_id,name:match.hotel_name,adresse:h[hi].adresse||match.hotel_ort||'',wp_url:match.wp_url||''};
     setT('hotels',h);
     // v0.18.4: Status des Treffers direkt übernehmen — sonst zeigt die Fertig-View bis zum
     // nächsten Reload „grün", obwohl der DB-Datensatz auf analyse_fehler steht.
     setHotelStatusFor(match.hotel_id,{status:match.status||'',grund:match.grund||''});
-    setHS(hi,{phase:'done',dbResults:[],placesResults:[]});
+    setHS(ref,{phase:'done',dbResults:[],placesResults:[]});
   };
 
   const pickGoogleCandidate=async(hi,cand)=>{
-    setHS(hi,{phase:'preparing'});
+    const ref=trip.hotels[hi]?.ref;
+    setHS(ref,{phase:'preparing'});
     const parsed=parseGoogleAddress(cand.address);
     const cc=getCountryCodeForLand();
     const ort=parsed.ort||'';
     const plz=parsed.plz||'';
-    if(!cc){setHS(hi,{phase:'error',error:'Country-Code fehlt — bitte Reiseland wählen oder Taxonomie ergänzen'});return;}
-    if(!ort){setHS(hi,{phase:'error',error:'Ort konnte nicht aus Google-Adresse geparst werden'});return;}
+    if(!cc){setHS(ref,{phase:'error',error:'Country-Code fehlt — bitte Reiseland wählen oder Taxonomie ergänzen'});return;}
+    if(!ort){setHS(ref,{phase:'error',error:'Ort konnte nicht aus Google-Adresse geparst werden'});return;}
     try{
       // Duplikat-Schutz: bevor neue Hotel-ID erzeugt wird, prüfen ob das Hotel via google_place_id
       // schon in der WW-DB liegt. Wenn ja, übernehmen wir die existierenden Daten — keine neue ID,
@@ -2022,7 +2033,7 @@ function App(){
               const h=[...trip.hotels];
               h[hi]={...h[hi],hotel_id:m.hotel_id,name:m.hotel_name||cand.name,adresse:h[hi].adresse||cand.address||'',wp_url:m.wp_url||''};
               setT('hotels',h);
-              setHS(hi,{phase:'done',dbResults:[],placesResults:[]});
+              setHS(ref,{phase:'done',dbResults:[],placesResults:[]});
               return;
             }
           }
@@ -2042,7 +2053,7 @@ function App(){
       const targetHotelName=retryHotelName||cand.name;
 
       // Optimistic Update
-      setHS(hi,{phase:'analyzing',analyzing_id:targetHotelId,analyzing_name:targetHotelName});
+      setHS(ref,{phase:'analyzing',analyzing_id:targetHotelId,analyzing_name:targetHotelName});
       const h=[...trip.hotels];
       h[hi]={...h[hi],
         hotel_id:targetHotelId,
@@ -2091,7 +2102,7 @@ function App(){
       // Fire-and-forget — User kann weiterarbeiten während WF5 läuft
       apiCall('POST','/hotel-analyse',payload).then(r=>{
         if(r&&r.success){
-          setHS(hi,{phase:'analyzed',analyzed_at:new Date().toISOString()});
+          setHS(ref,{phase:'analyzed',analyzed_at:new Date().toISOString()});
           // v0.18.6 (D4): Statuszustand einmalig nachladen, damit ein zuvor angezeigter
           // analyse_fehler nicht als veralteter Wert in der Fertig-View stehenbleibt.
           // Nicht-kritisch: Fehler werden ignoriert, spätestens der Reload korrigiert.
@@ -2099,17 +2110,17 @@ function App(){
             if(hr&&hr.success&&hr.hotel) setHotelStatusFor(targetHotelId,{status:hr.hotel.status||'',grund:hr.hotel.grund||''});
           }).catch(()=>{});
         }else{
-          setHS(hi,{phase:'analyze_error',error:(r&&r.error)||'Analyse-Antwort ohne Erfolgsbestätigung'});
+          setHS(ref,{phase:'analyze_error',error:(r&&r.error)||'Analyse-Antwort ohne Erfolgsbestätigung'});
         }
       }).catch(e=>{
-        setHS(hi,{phase:'analyze_error',error:e.message});
+        setHS(ref,{phase:'analyze_error',error:e.message});
       });
     }catch(e){
-      setHS(hi,{phase:'error',error:e.message});
+      setHS(ref,{phase:'error',error:e.message});
     }
   };
 
-  const cancelHotelSearch=(hi)=>setHS(hi,{phase:'idle',dbResults:[],placesResults:[],error:''});
+  const cancelHotelSearch=(hi)=>setHS(trip.hotels[hi]?.ref,{phase:'idle',dbResults:[],placesResults:[],error:''});
 
   // Hotel zurücksetzen (für "Anderes Hotel wählen") — leert IDs/Adresse, behält ref + name + Annotations
   // damit der Such-Button direkt wieder aktiv ist (User kann Namen editieren oder direkt suchen).
@@ -2119,7 +2130,7 @@ function App(){
     const h=[...trip.hotels];
     h[hi]={ref:cur.ref,hotel_id:'',name:cur.name||'',kategorie:'',adresse:'',telefon:'',tipps:cur.tipps||'',naechte:cur.naechte||'',wp_url:''};
     setT('hotels',h);
-    setHS(hi,{phase:'idle',dbResults:[],placesResults:[],error:''});
+    setHS(cur.ref,{phase:'idle',dbResults:[],placesResults:[],error:''});
   };
 
   // Hotel komplett aus dem Pool entfernen
@@ -2128,8 +2139,10 @@ function App(){
     if(!confirm(`Hotel ${cur.ref}${cur.name?' ('+cur.name+')':''} aus der Reise entfernen?`)) return;
     const h=trip.hotels.filter((_,i)=>i!==hi);
     setT('hotels',h);
-    // hotelSearch-State für diesen Index ebenfalls bereinigen
-    setHotelSearch(p=>{const n={...p};delete n[hi];return n;});
+    // v0.19.3 (L-WW-92): hotelSearch nach ref bereinigen. Vorher wurde n[hi] (Index) gelöscht —
+    // die höheren Indizes rückten NICHT nach, wodurch der Such-/Analysezustand nach dem Löschen
+    // eines oberen Hotels auf die falsche Zeile sprang. ref ist stabil → keine Nachbarn betroffen.
+    setHotelSearch(p=>{const n={...p};delete n[cur.ref];return n;});
   };
 
   // Nächster freier Hotel-Ref-Buchstabe (A-Z), nicht length-basiert
@@ -2262,6 +2275,20 @@ function App(){
     setTimeout(()=>setSaveStatus(null),6000);
   };
 
+  // v0.19.3 (Steffen-Wunsch): dauerhaft erreichbarer „Neue Reise"-Start. Mit Save-Rückfrage,
+  // damit die aktuelle Reise nicht ungespeichert verlorengeht. Bei Save-Fehler wird NICHT
+  // neu gestartet (kein Datenverlust). Reset via Reload auf saubere URL (State vollständig neu).
+  const handleNewTrip=async()=>{
+    if(!confirm('Neue Reise starten? Die aktuelle Ansicht wird verlassen.')) return;
+    if(entwurfId && isEditableStatus(tripStatus) && confirm('Aktuelle Reise vorher speichern?')){
+      try{
+        const res=await apiCall('POST','/save-draft',buildPayload());
+        if(res&&res.error){alert('Speichern fehlgeschlagen:\n'+res.error+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
+      }catch(e){alert('Speichern fehlgeschlagen:\n'+e.message+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
+    }
+    window.location.href=window.location.pathname;
+  };
+
   // EXPORT JSON
   const exportJson=()=>{
     const payload=buildPayload();
@@ -2295,11 +2322,12 @@ function App(){
   // 1:1 adamare-Pattern: erst Save (damit Übergabe immer den aktuellen Stand spiegelt),
   // dann /update-status. Bei Fehler im Save brechen wir vor dem Statuswechsel ab.
   const handleTransfer=async()=>{
-    if(!entwurfId){alert('Kein Entwurf vorhanden — bitte zuerst speichern.');return;}
+    setTransferBlock(null);
+    if(!entwurfId){setTransferBlock(['Diese Reise wurde noch nicht gespeichert. Bitte zuerst „💾 Speichern" — danach ist die Übergabe möglich.']);return;}
     if(!isEditableStatus(tripStatus)){alert('Dieser Entwurf wurde bereits übergeben und kann nicht erneut übergeben werden.');return;}
     const missing=validateForTransfer();
     if(missing.length>0){
-      alert('Vor der Übergabe bitte ergänzen:\n\n• '+missing.join('\n• '));
+      setTransferBlock(missing);
       return;
     }
     // v0.15: Wenn noch keine emotionale Analyse gelaufen ist → Confirm-Dialog zeigen.
@@ -2661,7 +2689,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.2 (Tagesort-Feld S-1 + Ort-Profil-Toggle S-2)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.3 (Hotel-Zuordnung ref-stabil, L-WW-92)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2906,7 +2934,7 @@ function App(){
 
           {/* Hotel Pool mit Suche */}
           <Field label="Hotels dieser Reise" badge="EMPFOHLEN" hint="Hotel-Name eintragen → 'Hotel suchen' → DB-Treffer wählen oder neu via Google anlegen.">
-            {trip.hotels.map((hotel,hi)=><div key={hi} style={{background:'var(--beige-light)',borderRadius:8,padding:12,border:'1px solid #D0D0D0',marginBottom:10}}>
+            {trip.hotels.map((hotel,hi)=><div key={hotel.ref} style={{background:'var(--beige-light)',borderRadius:8,padding:12,border:'1px solid #D0D0D0',marginBottom:10}}>
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
                 <span style={{background:hi===0?'var(--sage)':'var(--sage-light)',color:hi===0?'var(--white)':'var(--sage-dark)',borderRadius:'50%',width:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700}}>{hotel.ref}</span>
                 <span style={{fontSize:13,fontWeight:600}}>Hotel {hotel.ref}</span>
@@ -2919,7 +2947,7 @@ function App(){
               </div>
               <HotelSearchPanel
                 hi={hi}
-                state={hotelSearch[hi]}
+                state={hotelSearch[hotel.ref]}
                 trip={trip}
                 statusInfo={hotel.hotel_id?hotelStatus[hotel.hotel_id]:null}
                 onStart={startHotelSearch}
@@ -3469,6 +3497,8 @@ function App(){
           <span style={{fontSize:11,color:'#888',marginLeft:6}}><span style={{color:'var(--red)',fontWeight:700}}>*</span> = Pflichtfeld</span>
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          {/* v0.19.3: dauerhaft erreichbarer Neue-Reise-Start (mit Save-Rückfrage, s. handleNewTrip) */}
+          <button onClick={handleNewTrip} title="Neue Reise starten (fragt vorher, ob die aktuelle gespeichert werden soll)" style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>➕ Neue Reise</button>
           {/* v0.12: Lade-Modal-Trigger (ersetzt das primitive ENT-…-Eingabefeld) */}
           <button onClick={openLoadModal} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>📂 Laden</button>
           {/* v0.14: { } JSON-Button entfernt. JSON-Vorschau ist nur noch über Admin-Modus 'preview' im Save-Handler erreichbar. */}
@@ -3478,13 +3508,23 @@ function App(){
             <button onClick={handleSave} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst eine Reise laden oder neu anlegen':''} style={{background:entwurfId?'var(--white)':'#F0F0F0',color:entwurfId?'var(--sage)':'#999',border:'2px solid '+(entwurfId?'var(--sage)':'#CCC'),padding:'10px 20px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>{'💾 Speichern'}</button>
             {/* v0.18.0: Footer-Analyse-Button entfernt — Analyse läuft ausschließlich über die Section „KI-Vorschläge zur emotionalen Wirkung".
                 Der Übergabe-Flow ohne vorherige Analyse (showAnalyseConfirm) bleibt unverändert, er hängt an handleTransfer, nicht an diesem Button. */}
-            <button onClick={handleTransfer} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst speichern':''} style={{background:entwurfId?'var(--coral)':'#CCC',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>→ Übergeben</button>
+            <button onClick={handleTransfer} style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>→ Übergeben</button>
           </>}
           {/* v0.16: Master/Admin-Aktionen auf dem geöffneten Entwurf — Gating nach ASCII-Status (Kontrakt WF1 v2). */}
           {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>approveDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'✓ Freigeben'}</button>}
           {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>openRejectModal(entwurfId,tripStatus)} style={{background:'var(--white)',color:'var(--red)',border:'2px solid var(--red)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>↩ Zurückspielen</button>}
           {/* v0.16: Generieren aktiv (vorher Stub). Nur bei freigegeben. Backend schreibt Roh-Zeile; WP-Publish folgt separat. */}
           {canManage&&tripStatus==='freigegeben'&&<button onClick={()=>generateDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} title="Schreibt die Roh-Zeile. WP-Veröffentlichung (WF3) folgt später separat." style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'⚡ Generieren'}</button>}
+          {/* v0.19.3 (Punkt 2, F4=i): sichtbare Liste der fehlenden Pflichtfelder / Blockade-Hinweis. Kein Sprung zum Feld. */}
+          {transferBlock&&<div style={{flexBasis:'100%',width:'100%',background:'#FDECEA',border:'1px solid var(--red)',borderRadius:8,padding:'10px 14px',marginTop:4}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+              <div style={{fontWeight:700,fontSize:13,color:'var(--red)'}}>Übergabe noch nicht möglich — bitte ergänzen:</div>
+              <button onClick={()=>setTransferBlock(null)} title="Hinweis schließen" style={{background:'none',border:'none',color:'#999',fontSize:16,cursor:'pointer',lineHeight:1,padding:'0 4px'}}>✕</button>
+            </div>
+            <ul style={{margin:'6px 0 0',paddingLeft:20,fontSize:13,color:'var(--anthrazit)'}}>
+              {transferBlock.map((m,i)=><li key={i} style={{marginBottom:2}}>{m}</li>)}
+            </ul>
+          </div>}
         </div>
       </div>}
 
