@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.4 (L-WW-91 whisperer_id/created_at + L-WW-96 Pflichtfelder)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.19.5 (Aufgabe 47 Magic-Moment-Hinweis)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -2731,7 +2731,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.4 (L-WW-91 whisperer_id/created_at + L-WW-96 Pflichtfelder)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.5 (Aufgabe 47 Magic-Moment-Hinweis)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3186,7 +3186,10 @@ function App(){
 
         <Section title="Persönliche Erfahrung" icon="💬" open={openSections.persoenlich} onToggle={()=>toggleSection('persoenlich')}>
           <Field label="Persönliche Erfahrung" badge="PFLICHT"><TA placeholder="Wann warst du dort? Was war das Besondere?" rows={4} value={trip.persoenliche_erfahrung} onChange={v=>setT('persoenliche_erfahrung',v)}/></Field>
-          <Field label="Magic Moment" badge="EMPFOHLEN"><TA placeholder="Das eine Erlebnis, das diese Reise einzigartig macht..." rows={3} value={trip.magic_moment} onChange={v=>setT('magic_moment',v)}/></Field>
+          {/* v0.19.5 (Aufgabe 47, Weg C): rein empfehlender statischer Hinweis am Top-Level-Feld (F1=a).
+              Keine Validierung, keine Sperre — Feld bleibt als Fallback („Ort unklar") voll bedienbar.
+              Enthält die manuelle Doppelbefüllungs-Regel bis c-Dedupe/Aufgabe 48 (F2=a, MASTER §6). */}
+          <Field label="Magic Moment" badge="EMPFOHLEN" hint="Magic Moments am besten direkt in der Tagesplanung des passenden Tages beschreiben — dort, wo sie örtlich hingehören. Dieses Feld nur nutzen, wenn der Ort noch unklar ist. Steht der Moment bereits im Tagesablauf, dieses Feld bitte leer lassen (sonst Doppelbefüllung)."><TA placeholder="Das eine Erlebnis, das diese Reise einzigartig macht..." rows={3} value={trip.magic_moment} onChange={v=>setT('magic_moment',v)}/></Field>
           <Field label="Sicherheitshinweise" badge="EMPFOHLEN"><TA placeholder="Risiken, Einschränkungen..." rows={2} value={trip.sicherheitshinweise} onChange={v=>setT('sicherheitshinweise',v)}/></Field>
         </Section>
         </fieldset>
