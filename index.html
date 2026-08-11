@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.19.5 (Aufgabe 47 Magic-Moment-Hinweis)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.20.0 (Aufgabe 49 Kandidaten-Review & Freigabe-Strecke)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -782,6 +782,12 @@ const ROLE_COLORS={admin:'var(--coral)',curator_master:'var(--sage)',curator:'#8
 const STATUS_LABELS={entwurf:'Entwurf',draft:'Entwurf',uebergeben:'Übergeben','übergeben':'Übergeben',freigegeben:'Freigegeben',in_generierung:'In Generierung',veroeffentlicht:'Veröffentlicht','veröffentlicht':'Veröffentlicht',zurueckgespielt:'Zurückgespielt',fehler:'Fehler'};
 const STATUS_COLORS={entwurf:'#888',draft:'#888',uebergeben:'#E07A5F','übergeben':'#E07A5F',freigegeben:'#7A8B6F',in_generierung:'#3498DB',veroeffentlicht:'#4CAF50','veröffentlicht':'#4CAF50',zurueckgespielt:'#E6A23C',fehler:'#D32F2F'};
 const isEditableStatus=(s)=>!s||s==='entwurf'||s==='draft'||s==='zurueckgespielt';
+// v0.20.0 (Aufgabe 49): Freigabe-Achse (freigabe_status) — GETRENNT von der Entwurfs-Achse (status).
+// Werte laut KONTRAKT_c-b_B-3 v1.1 §2/§6: (leer) → kandidat → kurator_freigegeben → live (+ gesperrt).
+const FREIGABE_LABELS={kandidat:'Kandidat liegt vor',kurator_freigegeben:'Kurator-freigegeben',live:'Live',gesperrt:'Gesperrt'};
+const FREIGABE_COLORS={kandidat:'#3498DB',kurator_freigegeben:'#7A8B6F',live:'#4CAF50',gesperrt:'#D32F2F'};
+// App-Rolle → Kontrakt-Rolle (Body-Feld `role` bei ww-promote). Wahrheitsgemäß aus der Session, nie wählbar.
+const toContractRole=(r)=>r==='admin'?'admin':r==='curator_master'?'master':'kurator';
 
 async function sha256(text){
   const enc=new TextEncoder();
@@ -1069,6 +1075,13 @@ function App(){
   const[rejectTargetId,setRejectTargetId]=useState('');
   const[actionBusy,setActionBusy]=useState('');   // entwurf_id, der gerade verarbeitet wird
   const[actionToast,setActionToast]=useState(null); // {kind:'ok'|'err',msg}
+  // === v0.20.0 (Aufgabe 49): Freigabe-Achse (Kandidaten-Review) ===
+  // Aus der Lade-Strecke gelesen (Kontrakt §4, Spalten CI–CM). Getrennt von der Entwurfs-Achse.
+  const[freigabe,setFreigabe]=useState({status:'',reise_id:'',kandidat_pdf_url:'',kandidat_generated_at:'',freigabe_kurator_at:'',freigabe_admin_at:'',pdf_url:''});
+  const[lastSeenKandidatAt,setLastSeenKandidatAt]=useState('');   // F5: Referenz für Abweisungs-Erkennung (K-A1)
+  const[correctionMode,setCorrectionMode]=useState(false);        // F4: Quelle korrigieren + neuer Lauf (Entwurfs-Achse)
+  const[promoteBusy,setPromoteBusy]=useState('');                 // '' | 'kurator_freigabe' | 'golive' | 'entsperren' | 'refresh'
+  const[promoteMsg,setPromoteMsg]=useState(null);                 // null | {kind:'ok'|'err'|'info', text}
   // === v0.17.0: Admin-Tab — globaler Wortbudget-Default (L-WW-67 §2) ===
   const[wortbudget,setWortbudget]=useState(()=>wbCanonical(WB_DEFAULT));
   const[wbLoaded,setWbLoaded]=useState(false);     // GET /config-wortbudget einmal geholt?
@@ -1617,6 +1630,21 @@ function App(){
     // halten den Wert 1:1 im State; STATUS_LABELS/STATUS_COLORS behandeln 'draft' als Alias für 'entwurf'.
     setTripStatus(d.status||'entwurf');
     setRejectComment(d.reject_comment||'');
+    // v0.20.0 (Aufgabe 49): Freigabe-Achse aus der Roh-Zeile übernehmen (Kontrakt §4). Fehlen die
+    // Felder (Lade-Strecke filtert noch), bleibt status='' → Freigabe-Block inaktiv (c-Prüfpunkt).
+    const fg={
+      status:d.freigabe_status||'',
+      reise_id:d.reise_id||'',
+      kandidat_pdf_url:d.kandidat_pdf_url||'',
+      kandidat_generated_at:d.kandidat_generated_at||'',
+      freigabe_kurator_at:d.freigabe_kurator_at||'',
+      freigabe_admin_at:d.freigabe_admin_at||'',
+      pdf_url:d.pdf_url||''
+    };
+    setFreigabe(fg);
+    setLastSeenKandidatAt(fg.kandidat_generated_at||'');
+    setCorrectionMode(false);
+    setPromoteMsg(null);
     let params={};
     try{params=typeof d.params==='string'?JSON.parse(d.params):(d.params||{});}catch{}
     setTrip(p=>{
@@ -2365,7 +2393,7 @@ function App(){
   const handleTransfer=async()=>{
     setTransferBlock(null);
     if(!entwurfId){setTransferBlock(['Diese Reise wurde noch nicht gespeichert. Bitte zuerst „💾 Speichern" — danach ist die Übergabe möglich.']);return;}
-    if(!isEditableStatus(tripStatus)){alert('Dieser Entwurf wurde bereits übergeben und kann nicht erneut übergeben werden.');return;}
+    if(!isEditableStatus(tripStatus)&&!correctionMode){alert('Dieser Entwurf wurde bereits übergeben und kann nicht erneut übergeben werden.');return;}
     const missing=validateForTransfer();
     if(missing.length>0){
       setTransferBlock(missing);
@@ -2412,6 +2440,7 @@ function App(){
       // 3) Lokalen State aktualisieren
       setTripStatus('uebergeben');
       setRejectComment('');
+      setCorrectionMode(false);  // v0.20.0 (F4): Korrekturmodus endet mit der Übergabe
       setTransferStatus('success');setTransferMsg('Übergeben — wartet auf Master-Freigabe.');
       // URL aktualisieren
       const newUrl=window.location.pathname+'?entwurf_id='+encodeURIComponent(entwurfId);
@@ -2563,6 +2592,63 @@ function App(){
     }catch(err){showToast('err','Fehler: '+err.message,8000);}
     setActionBusy('');
   };
+
+  // ============== v0.20.0 (Aufgabe 49): FREIGABE-STRECKE (ww-promote) ==============
+  // Endpoint ist Geschwister von reise-api-ww-v2: <host>/webhook/ww-promote (F6=a).
+  const promoteBase=useCallback(()=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/ww-promote',[apiBase]);
+
+  // Ein promote-Call. action ∈ {kurator_freigabe, golive, entsperren}. Body: {action, reise_id, role}.
+  const promoteAction=useCallback(async(action)=>{
+    if(!freigabe.reise_id){setPromoteMsg({kind:'err',text:'Keine reise_id vorhanden — Reise erneut laden (c-Prüfpunkt Kontrakt §4).'});return;}
+    // UI-seitige Rollentrennung: Server prüft v1 nur payload-basiert (L-WW-107), die App hält die Grenze strikt.
+    if((action==='golive'||action==='entsperren')&&!canManage){setPromoteMsg({kind:'err',text:'Diese Aktion ist Admin/Master vorbehalten.'});return;}
+    setPromoteBusy(action);setPromoteMsg(null);
+    try{
+      const headers={'Content-Type':'application/json'};  // Pflicht-Header (Kontrakt §1, v1.1) — ohne ihn Abweisung.
+      if(authHeaderName&&authHeaderValue) headers[authHeaderName]=authHeaderValue;
+      const res=await fetch(promoteBase(),{method:'POST',headers,body:JSON.stringify({action,reise_id:freigabe.reise_id,role:toContractRole(role)})});
+      const txt=await res.text();let data;try{data=JSON.parse(txt);}catch{data=null;}
+      // Kontrakt §3: Erfolg = ok:true; alles andere trägt message (Guard-Grund).
+      if(!data||data.ok!==true){throw new Error((data&&data.message)?data.message:('HTTP '+res.status+': '+txt.substring(0,150)));}
+      setFreigabe(p=>({...p,status:data.freigabe_status||p.status,pdf_url:data.pdf_url||p.pdf_url}));
+      if(action==='golive') setPromoteMsg({kind:'ok',text:'Live genommen.'+(data.pdf_url?' PDF: '+data.pdf_url:'')});
+      else if(action==='entsperren') setPromoteMsg({kind:'ok',text:'Entsperrt — die Reise steht wieder als Kandidat zur Korrektur.'});
+      else setPromoteMsg({kind:'ok',text:'Inhalt freigegeben — der Admin nimmt die Reise live.'});
+    }catch(err){setPromoteMsg({kind:'err',text:'Fehler: '+err.message});}
+    setPromoteBusy('');
+  },[apiBase,authHeaderName,authHeaderValue,canManage,freigabe.reise_id,promoteBase,role]);
+
+  // F5 (K-A1): Freigabe-Zustand neu laden und kandidat_generated_at vergleichen. Unverändert nach einem
+  // Lauf = Gate-Abweisung (reguläres Gate-Verhalten, kein Fehler-Alarm).
+  const refreshFreigabe=useCallback(async()=>{
+    if(!entwurfId){return;}
+    setPromoteBusy('refresh');setPromoteMsg(null);
+    try{
+      const d=await apiCall('GET',`/load-draft?entwurf_id=${encodeURIComponent(entwurfId)}&user_id=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(role)}`);
+      if(!(d&&d.success&&d.mode==='single')){throw new Error(d&&d.error?d.error:'Laden fehlgeschlagen.');}
+      const neu=d.kandidat_generated_at||'';
+      setFreigabe(p=>({...p,status:d.freigabe_status||p.status,reise_id:d.reise_id||p.reise_id,kandidat_pdf_url:d.kandidat_pdf_url||p.kandidat_pdf_url,kandidat_generated_at:neu,freigabe_kurator_at:d.freigabe_kurator_at||p.freigabe_kurator_at,freigabe_admin_at:d.freigabe_admin_at||p.freigabe_admin_at,pdf_url:d.pdf_url||p.pdf_url}));
+      if(lastSeenKandidatAt&&neu&&neu===lastSeenKandidatAt){
+        setPromoteMsg({kind:'info',text:'Kein neuer Kandidat — der Lauf wurde vom Gate abgewiesen (regulär).'});
+      }else if(neu&&neu!==lastSeenKandidatAt){
+        setPromoteMsg({kind:'ok',text:'Neuer Kandidat liegt vor.'});
+        setLastSeenKandidatAt(neu);
+      }else{
+        setPromoteMsg({kind:'info',text:'Status aktualisiert.'});
+      }
+    }catch(err){setPromoteMsg({kind:'err',text:'Fehler: '+err.message});}
+    setPromoteBusy('');
+  },[apiCall,currentUserId,entwurfId,lastSeenKandidatAt,role]);
+
+  // F4: Korrektur + neuer Lauf. KEIN eigener Endpoint (Kontrakt §5) — nur Entwurfs-Achse: Felder editierbar
+  // machen (correctionMode), Kurator korrigiert die Quelle + nutzt den bestehenden „→ Übergeben".
+  // Der neue Lauf läuft über die bestehende Admin-Generieren-Freigabe.
+  const requestCorrection=useCallback(()=>{
+    if(!confirm('Korrektur anfordern?\n\nDie Onboarding-Felder werden zum Bearbeiten geöffnet. Nach der Korrektur die Reise über „→ Übergeben" erneut in die Freigabe geben — der Admin startet den neuen Lauf.')) return;
+    setCorrectionMode(true);
+    setPromoteMsg({kind:'info',text:'Korrekturmodus aktiv: Quelle anpassen, dann „→ Übergeben".'});
+    setTab('trip');
+  },[]);
 
   // ============== v0.17.0: WORTBUDGET-DEFAULT (Admin-Tab, canManage) ==============
   // GET/POST gegen WF1-Webhook-Host (apiBase) via apiCall — derselbe Auth-Header wie /update-status,/generate.
@@ -2731,7 +2817,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.19.5 (Aufgabe 47 Magic-Moment-Hinweis)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.20.0 (Aufgabe 49 Kandidaten-Review & Freigabe-Strecke)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2928,12 +3014,83 @@ function App(){
         </>;
       })()}
 
+      {/* v0.20.0 (Aufgabe 49): FREIGABE-BLOCK — einmal über Trip/Tage, sichtbar sobald freigabe_status gesetzt.
+          Read-only-Kandidaten-Ansicht (F1: Öffnen-Link + iframe), Aktionen (F2), Freigabe-Badge (F3),
+          Status-aktualisieren (F5). Kein Editier-Element hier (Brief §b1). */}
+      {!showJson&&(tab==='trip'||tab==='tage')&&freigabe.status&&(()=>{
+        const st=freigabe.status;
+        const pdfShown=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
+        const istKandidat=st==='kandidat';
+        const nichtVeroeffentlicht=st==='kandidat'||st==='kurator_freigegeben';
+        const btn=(label,onClick,busyKey,bg,border,color)=>(
+          <button onClick={onClick} disabled={!!promoteBusy} style={{background:bg,color:color,border:border,padding:'9px 16px',borderRadius:8,fontSize:13,cursor:promoteBusy?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{promoteBusy===busyKey?'…':label}</button>
+        );
+        const ts=(v)=>{try{return v?new Date(v).toLocaleString('de-DE'):'—';}catch{return v||'—';}};
+        return (
+        <div style={{background:'var(--white)',border:'2px solid '+(FREIGABE_COLORS[st]||'#888'),borderRadius:12,padding:'16px 18px',marginBottom:20,boxShadow:'0 2px 10px rgba(0,0,0,0.05)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:10}}>
+            <span style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:18,color:'var(--sage-dark)',fontWeight:700}}>Freigabe</span>
+            <span style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 12px',background:(FREIGABE_COLORS[st]||'#888'),color:'var(--white)',borderRadius:20,fontSize:12,fontWeight:700,letterSpacing:0.3}}>
+              {FREIGABE_LABELS[st]||st}
+            </span>
+            {nichtVeroeffentlicht&&<span style={{fontSize:12,color:'var(--coral)',fontWeight:600}}>Kandidat — nicht veröffentlicht</span>}
+          </div>
+
+          {/* F1: Kandidaten-PDF read-only — Öffnen-Link primär, iframe darunter (Mobile trägt der Link). */}
+          {pdfShown?<>
+            <a href={pdfShown} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'var(--sage)',color:'var(--white)',padding:'8px 16px',borderRadius:8,fontSize:13,fontWeight:600,textDecoration:'none',marginBottom:10}}>↗ {istKandidat||freigabe.kandidat_pdf_url?'Kandidat-PDF':'PDF'} öffnen</a>
+            <div style={{border:'1px solid #E0E0E0',borderRadius:8,overflow:'hidden',background:'#fff'}}>
+              <iframe src={pdfShown} title="Kandidat-PDF" style={{width:'100%',height:'70vh',border:'none',display:'block'}}/>
+            </div>
+          </>:<div style={{background:'var(--beige-light)',border:'1px solid var(--sage-light)',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#888'}}>
+            Keine PDF-URL vorhanden. Falls die Lade-Strecke die Felder <code>kandidat_pdf_url</code>/<code>pdf_url</code> noch nicht durchreicht, ist das ein c-Prüfpunkt (Kontrakt §4).
+          </div>}
+
+          {/* Zeitstempel */}
+          <div style={{display:'flex',gap:16,flexWrap:'wrap',fontSize:11,color:'#999',margin:'10px 0 4px'}}>
+            <span>Kandidat generiert: {ts(freigabe.kandidat_generated_at)}</span>
+            <span>Kurator-Freigabe: {ts(freigabe.freigabe_kurator_at)}</span>
+            <span>Admin/Live: {ts(freigabe.freigabe_admin_at)}</span>
+          </div>
+
+          {/* Aktionen je Status */}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginTop:10,paddingTop:12,borderTop:'1px solid #EEE'}}>
+            {/* kandidat: Inhalt freigeben (alle Rollen) + Korrektur (alle Rollen) */}
+            {st==='kandidat'&&btn('✓ Inhalt freigeben',()=>{if(confirm('Inhalt jetzt freigeben?\n\nDamit bestätigst du, dass der Kandidat inhaltlich in Ordnung ist. Danach nimmt der Admin die Reise live.')) promoteAction('kurator_freigabe');},'kurator_freigabe','var(--sage)','none','var(--white)')}
+            {st==='kandidat'&&btn('✎ Korrektur + neuer Lauf',requestCorrection,'','var(--white)','2px solid var(--coral)','var(--coral)')}
+            {/* kurator_freigegeben: Go-Live (Admin/Master) */}
+            {st==='kurator_freigegeben'&&canManage&&btn('⚡ Go-Live',()=>{if(confirm('Reise jetzt live nehmen?\n\nPDF-Promote, Post-Tausch, Landingpage, WooCommerce. Danach ist die Reise veröffentlicht.')) promoteAction('golive');},'golive','var(--coral)','none','var(--white)')}
+            {/* entsperren: Admin/Master, aus kurator_freigegeben / live / gesperrt */}
+            {(st==='kurator_freigegeben'||st==='live'||st==='gesperrt')&&canManage&&btn('🔓 Entsperren',()=>{if(confirm('Reise entsperren?\n\nDer Freigabe-Status wird auf „Kandidat" zurückgesetzt, damit die Quelle korrigiert und ein neuer Lauf gestartet werden kann. Live-/Kandidaten-Inhalte bleiben unberührt.')) promoteAction('entsperren');},'entsperren','var(--white)','2px solid var(--anthrazit)','var(--anthrazit)')}
+            {/* Status aktualisieren (F5) — immer verfügbar */}
+            {btn('↻ Status aktualisieren',refreshFreigabe,'refresh','var(--white)','1px solid #CCC','#666')}
+          </div>
+
+          {/* Read-only-/Schutz-Hinweis nach Freigabe/Go-Live */}
+          {(st==='kurator_freigegeben'||st==='live'||st==='gesperrt')&&<div style={{marginTop:10,fontSize:12,color:'#888',display:'flex',alignItems:'flex-start',gap:6}}>
+            <span>🔒</span>
+            <span>{st==='live'?'Diese Reise ist live. ':st==='gesperrt'?'Diese Reise ist gesperrt. ':'Inhalt ist kurator-freigegeben. '}Neue Läufe sind gesperrt; das Entsperren ist Admin/Master vorbehalten.</span>
+          </div>}
+
+          {/* promote-Feedback */}
+          {promoteMsg&&<div style={{marginTop:10,fontSize:12,padding:'8px 12px',borderRadius:8,background:promoteMsg.kind==='err'?'#FDECEA':promoteMsg.kind==='ok'?'#EAF6EC':'#EAF1FB',color:promoteMsg.kind==='err'?'var(--red)':promoteMsg.kind==='ok'?'#2E7D32':'#2A5D9F',border:'1px solid '+(promoteMsg.kind==='err'?'var(--red)':promoteMsg.kind==='ok'?'#4CAF50':'#3498DB')}}>
+            {promoteMsg.text}
+          </div>}
+        </div>);
+      })()}
+
       {/* TRIP TAB */}
       {!showJson&&tab==='trip'&&<>
         {/* v0.12: Status-Hinweisbanner. Erscheint, sobald der Status nicht mehr 'entwurf' ist. */}
-        {!isEditableStatus(tripStatus)&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        {!isEditableStatus(tripStatus)&&!correctionMode&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <span style={{fontSize:18}}>🔒</span>
           <span><strong>Status: {STATUS_LABELS[tripStatus]||tripStatus}</strong> — diese Reise ist nicht mehr editierbar.</span>
+        </div>}
+
+        {/* v0.20.0 (F4): Korrekturmodus-Banner — ersetzt im Korrekturmodus den Read-only-Hinweis. */}
+        {correctionMode&&<div style={{background:'#FFF7E6',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:18}}>✎</span>
+          <span><strong>Korrekturmodus</strong> — Quelle anpassen, dann unten „→ Übergeben". Der Admin startet den neuen Lauf.</span>
         </div>}
         {/* v0.13: Reject-Banner — sichtbar wenn die Reise nach Zurückweisung wieder im Entwurfsstatus ist
             UND ein reject_comment vorliegt. Verschwindet nach erneuter Übergabe automatisch
@@ -2956,7 +3113,7 @@ function App(){
         </div>}
         {/* v0.12: Read-only-Wrapper. <fieldset disabled> deaktiviert alle Inputs/Selects/Textareas/Buttons
             innerhalb des Trip-Tabs nativ — keine Touches an den einzelnen Feldern nötig. */}
-        <fieldset disabled={!isEditableStatus(tripStatus)} style={{border:'none',padding:0,margin:0,minWidth:0}}>
+        <fieldset disabled={!isEditableStatus(tripStatus)&&!correctionMode} style={{border:'none',padding:0,margin:0,minWidth:0}}>
         <Section title="Basis-Informationen" icon="📌" open={openSections.basis} onToggle={()=>toggleSection('basis')}>
           <Field label="Titel / Destination" badge="PFLICHT"><TI placeholder="z.B. Andalusien, Spanien" value={trip.reise_ort} onChange={v=>setT('reise_ort',v)}/></Field>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
@@ -3198,9 +3355,15 @@ function App(){
       {/* TAGE TAB */}
       {!showJson&&tab==='tage'&&<>
         {/* v0.12: Status-Hinweisbanner für Tage-Tab */}
-        {!isEditableStatus(tripStatus)&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        {!isEditableStatus(tripStatus)&&!correctionMode&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <span style={{fontSize:18}}>🔒</span>
           <span><strong>Status: {STATUS_LABELS[tripStatus]||tripStatus}</strong> — diese Reise ist nicht mehr editierbar.</span>
+        </div>}
+
+        {/* v0.20.0 (F4): Korrekturmodus-Banner — ersetzt im Korrekturmodus den Read-only-Hinweis. */}
+        {correctionMode&&<div style={{background:'#FFF7E6',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:18}}>✎</span>
+          <span><strong>Korrekturmodus</strong> — Quelle anpassen, dann unten „→ Übergeben". Der Admin startet den neuen Lauf.</span>
         </div>}
         {/* v0.13: Reject-Banner auch im Tage-Tab */}
         {isEditableStatus(tripStatus)&&rejectComment&&<div style={{background:'#FDECEA',border:'1px solid var(--red)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13}}>
@@ -3213,7 +3376,7 @@ function App(){
             {rejectComment}
           </div>
         </div>}
-        <fieldset disabled={!isEditableStatus(tripStatus)} style={{border:'none',padding:0,margin:0,minWidth:0}}>
+        <fieldset disabled={!isEditableStatus(tripStatus)&&!correctionMode} style={{border:'none',padding:0,margin:0,minWidth:0}}>
         <div style={{background:'var(--sage-light)',padding:14,borderRadius:8,marginTop:16,marginBottom:16,fontSize:12}}>
           <strong>{tage.length} Tag(e)</strong> angelegt. Klick auf einen Tag zum Bearbeiten. Mit ↑↓ kannst du Tage und Einträge umsortieren, mit ✕ löschen. Hotels werden aus dem Pool (Reise-Ebene) zugeordnet.
         </div>
@@ -3549,7 +3712,7 @@ function App(){
           {/* v0.14: { } JSON-Button entfernt. JSON-Vorschau ist nur noch über Admin-Modus 'preview' im Save-Handler erreichbar. */}
           {/* v0.12/0.13: Speichern + Übergeben nur sichtbar bei editierbarem Status (entwurf/draft) UND vorhandener entwurfId.
               Bei leerer entwurfId (Bug-#2-Fall: Deep-Link auf nicht-zugreifbare ID) sind beide Buttons disabled. */}
-          {isEditableStatus(tripStatus)&&<>
+          {(isEditableStatus(tripStatus)||correctionMode)&&<>
             <button onClick={handleSave} disabled={!entwurfId} title={!entwurfId?'Bitte zuerst eine Reise laden oder neu anlegen':''} style={{background:entwurfId?'var(--white)':'#F0F0F0',color:entwurfId?'var(--sage)':'#999',border:'2px solid '+(entwurfId?'var(--sage)':'#CCC'),padding:'10px 20px',borderRadius:8,fontSize:14,cursor:entwurfId?'pointer':'not-allowed',fontWeight:600}}>{'💾 Speichern'}</button>
             {/* v0.18.0: Footer-Analyse-Button entfernt — Analyse läuft ausschließlich über die Section „KI-Vorschläge zur emotionalen Wirkung".
                 Der Übergabe-Flow ohne vorherige Analyse (showAnalyseConfirm) bleibt unverändert, er hängt an handleTransfer, nicht an diesem Button. */}
