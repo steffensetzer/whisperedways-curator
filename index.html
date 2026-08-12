@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.20.0 (Aufgabe 49 Kandidaten-Review & Freigabe-Strecke)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.21.0 (Aufgabe 49 · F-3a Review-Split-View)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1082,6 +1082,19 @@ function App(){
   const[correctionMode,setCorrectionMode]=useState(false);        // F4: Quelle korrigieren + neuer Lauf (Entwurfs-Achse)
   const[promoteBusy,setPromoteBusy]=useState('');                 // '' | 'kurator_freigabe' | 'golive' | 'entsperren' | 'refresh'
   const[promoteMsg,setPromoteMsg]=useState(null);                 // null | {kind:'ok'|'err'|'info', text}
+  // === v0.21.0 (F-3a): Review-Split-View — Viewport-Breite (Desktop-Ergonomie). ===
+  // Ab SPLIT_MIN_PX liegt das Kandidaten-PDF als festes rechtes Panel neben der Reise-/Tage-Eingabe,
+  // beide Spalten mit eigenem Scroll-Kontext. Darunter Stapel-Fallback (Öffnen-Link primär, iframe 70vh).
+  const SPLIT_MIN_PX=1200;
+  const[isWideForSplit,setIsWideForSplit]=useState(()=>typeof window!=='undefined'&&typeof window.matchMedia==='function'?window.matchMedia('(min-width:'+SPLIT_MIN_PX+'px)').matches:false);
+  useEffect(()=>{
+    if(typeof window==='undefined'||typeof window.matchMedia!=='function') return;
+    const mq=window.matchMedia('(min-width:'+SPLIT_MIN_PX+'px)');
+    const onChange=e=>setIsWideForSplit(e.matches);
+    if(mq.addEventListener) mq.addEventListener('change',onChange); else mq.addListener(onChange);
+    setIsWideForSplit(mq.matches);
+    return()=>{if(mq.removeEventListener) mq.removeEventListener('change',onChange); else mq.removeListener(onChange);};
+  },[]);
   // === v0.17.0: Admin-Tab — globaler Wortbudget-Default (L-WW-67 §2) ===
   const[wortbudget,setWortbudget]=useState(()=>wbCanonical(WB_DEFAULT));
   const[wbLoaded,setWbLoaded]=useState(false);     // GET /config-wortbudget einmal geholt?
@@ -2812,12 +2825,20 @@ function App(){
     return <LoginScreen apiBase={apiBase} authHeaderName={authHeaderName} authHeaderValue={authHeaderValue} onAuthHeaderValueChange={setAuthHeaderValue} onLogin={handleLogin}/>;
   }
 
+  // v0.21.0 (F-3a): Split-View-Gate. Aktiv nur, wenn eine Kandidaten-PDF-URL vorliegt (ohne PDF kein
+  // festes rechtes Panel), der Viewport breit genug ist und der trip/tage-Kontext im Formular sichtbar ist.
+  // Der 403-Zustand (c-F-2 offen) betrifft nur den iframe-Inhalt, nicht die URL → Panel erscheint dennoch.
+  const splitPdfUrl=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
+  const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&!showJson&&(tab==='trip'||tab==='tage');
+  const SPLIT_PANEL_W='min(44vw, 620px)';
+  const SPLIT_PAD_RIGHT='calc('+SPLIT_PANEL_W+' + 40px)';
+
   return <WhispererIContext.Provider value={whispererI}><div style={{minHeight:'100vh'}}>
     {/* Header */}
-    <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+    <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.20.0 (Aufgabe 49 Kandidaten-Review & Freigabe-Strecke)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.21.0 (Aufgabe 49 · F-3a Review-Split-View)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2871,11 +2892,11 @@ function App(){
     </div>}
 
     {/* Tabs — v0.14: JSON-Spezialbehandlung entfernt, weil der json-Tab nicht mehr in tabs[] steht. */}
-    <div style={{display:'flex',gap:0,background:'var(--white)',borderBottom:'1px solid #E0E0E0',padding:'0 24px',overflowX:'auto'}}>
+    <div style={{display:'flex',gap:0,background:'var(--white)',borderBottom:'1px solid #E0E0E0',padding:'0 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),overflowX:'auto'}}>
       {tabs.map(t=><button key={t.id} className="tab-btn" onClick={()=>{setShowJson(false);setTab(t.id);}} style={{padding:'12px 20px',border:'none',cursor:'pointer',background:(tab===t.id&&!showJson)?'var(--beige)':'transparent',borderBottom:(tab===t.id&&!showJson)?'3px solid var(--sage)':'3px solid transparent',fontFamily:"'Playfair Display',Georgia,serif",fontSize:14,color:(tab===t.id&&!showJson)?'var(--sage)':'#999',fontWeight:700,whiteSpace:'nowrap'}}>{t.icon} {t.label}</button>)}
     </div>
 
-    <div style={{maxWidth:720,margin:'0 auto',padding:'20px 24px 60px'}}>
+    <div style={{maxWidth:720,margin:'0 auto',padding:'20px 24px 60px',...(splitActive?{maxWidth:'none',margin:'0',width:'100%',boxSizing:'border-box',paddingRight:SPLIT_PAD_RIGHT}:{})}}>
 
       {/* JSON PREVIEW */}
       {showJson&&<div>
@@ -3027,7 +3048,10 @@ function App(){
         );
         const ts=(v)=>{try{return v?new Date(v).toLocaleString('de-DE'):'—';}catch{return v||'—';}};
         return (
-        <div style={{background:'var(--white)',border:'2px solid '+(FREIGABE_COLORS[st]||'#888'),borderRadius:12,padding:'16px 18px',marginBottom:20,boxShadow:'0 2px 10px rgba(0,0,0,0.05)'}}>
+        <div style={splitActive?{position:'fixed',top:0,right:0,bottom:0,width:SPLIT_PANEL_W,background:'var(--white)',borderLeft:'2px solid '+(FREIGABE_COLORS[st]||'#888'),boxShadow:'-2px 0 14px rgba(0,0,0,0.10)',display:'flex',flexDirection:'column',zIndex:50,overflow:'hidden'}:{background:'var(--white)',border:'2px solid '+(FREIGABE_COLORS[st]||'#888'),borderRadius:12,padding:'16px 18px',marginBottom:20,boxShadow:'0 2px 10px rgba(0,0,0,0.05)'}}>
+          {/* v0.21.0 (F-3a): Kopf-Bereich. Im Split scrollbarer oberer Panel-Teil (Badge/Link/Zeitstempel/Aktionen/
+              Schutz/Feedback); der iframe füllt darunter die Resthöhe. Non-Split: display:contents → unverändertes Stapel-Layout. */}
+          <div style={splitActive?{flex:'0 1 auto',overflowY:'auto',padding:'14px 16px 10px'}:{display:'contents'}}>
           <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:10}}>
             <span style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:18,color:'var(--sage-dark)',fontWeight:700}}>Freigabe</span>
             <span style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 12px',background:(FREIGABE_COLORS[st]||'#888'),color:'var(--white)',borderRadius:20,fontSize:12,fontWeight:700,letterSpacing:0.3}}>
@@ -3039,9 +3063,10 @@ function App(){
           {/* F1: Kandidaten-PDF read-only — Öffnen-Link primär, iframe darunter (Mobile trägt der Link). */}
           {pdfShown?<>
             <a href={pdfShown} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'var(--sage)',color:'var(--white)',padding:'8px 16px',borderRadius:8,fontSize:13,fontWeight:600,textDecoration:'none',marginBottom:10}}>↗ {istKandidat||freigabe.kandidat_pdf_url?'Kandidat-PDF':'PDF'} öffnen</a>
-            <div style={{border:'1px solid #E0E0E0',borderRadius:8,overflow:'hidden',background:'#fff'}}>
+            {!splitActive&&<div style={{border:'1px solid #E0E0E0',borderRadius:8,overflow:'hidden',background:'#fff'}}>
               <iframe src={pdfShown} title="Kandidat-PDF" style={{width:'100%',height:'70vh',border:'none',display:'block'}}/>
-            </div>
+            </div>}
+            {splitActive&&<div style={{fontSize:11,color:'#999',margin:'2px 0 4px'}}>PDF rechts im Panel — eigener Scroll.</div>}
           </>:<div style={{background:'var(--beige-light)',border:'1px solid var(--sage-light)',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#888'}}>
             Keine PDF-URL vorhanden. Falls die Lade-Strecke die Felder <code>kandidat_pdf_url</code>/<code>pdf_url</code> noch nicht durchreicht, ist das ein c-Prüfpunkt (Kontrakt §4).
           </div>}
@@ -3075,6 +3100,12 @@ function App(){
           {/* promote-Feedback */}
           {promoteMsg&&<div style={{marginTop:10,fontSize:12,padding:'8px 12px',borderRadius:8,background:promoteMsg.kind==='err'?'#FDECEA':promoteMsg.kind==='ok'?'#EAF6EC':'#EAF1FB',color:promoteMsg.kind==='err'?'var(--red)':promoteMsg.kind==='ok'?'#2E7D32':'#2A5D9F',border:'1px solid '+(promoteMsg.kind==='err'?'var(--red)':promoteMsg.kind==='ok'?'#4CAF50':'#3498DB')}}>
             {promoteMsg.text}
+          </div>}
+          </div>{/* /Kopf-Bereich (F-3a) */}
+          {/* v0.21.0 (F-3a): iframe füllt im Split die Resthöhe des Panels — eigener Scroll-Kontext (PDF scrollt
+              intern), unabhängig vom Seiten-/Formular-Scroll links. Im 403-Zustand (c-F-2 offen) zeigt der Rahmen 403. */}
+          {splitActive&&<div style={{flex:'1 1 auto',minHeight:0,borderTop:'1px solid #E0E0E0',background:'#fff'}}>
+            <iframe src={pdfShown} title="Kandidat-PDF" style={{width:'100%',height:'100%',border:'none',display:'block'}}/>
           </div>}
         </div>);
       })()}
