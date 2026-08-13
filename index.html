@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.23.1 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.23.2 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -2639,6 +2639,10 @@ function App(){
       if(!(d&&d.success&&d.mode==='single')){throw new Error(d&&d.error?d.error:'Laden fehlgeschlagen.');}
       const neu=d.kandidat_generated_at||'';
       setFreigabe(p=>({...p,status:d.freigabe_status||p.status,reise_id:d.reise_id||p.reise_id,kandidat_pdf_url:d.kandidat_pdf_url||p.kandidat_pdf_url,kandidat_generated_at:neu,freigabe_kurator_at:d.freigabe_kurator_at||p.freigabe_kurator_at,freigabe_admin_at:d.freigabe_admin_at||p.freigabe_admin_at,pdf_url:d.pdf_url||p.pdf_url}));
+      // v0.23.2: auch die Entwurfs-Achse mitziehen. /load-draft liefert d.status; ohne diese Zeile blieb
+      // tripStatus nach einem WF3PDF-Lauf lokal auf 'in_generierung' hängen (oberer Sperr-Hinweis +
+      // kandidatVeraltet), obwohl der Kandidat schon frisch war — bislang nur per vollem Reload auflösbar.
+      if(d.status) setTripStatus(d.status);
       if(silent){
         if(neu&&neu!==lastSeenKandidatAt) setLastSeenKandidatAt(neu);
       }else if(lastSeenKandidatAt&&neu&&neu===lastSeenKandidatAt){
@@ -2869,7 +2873,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.23.1 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.23.2 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -2929,7 +2933,7 @@ function App(){
 
     <div style={{maxWidth:720,margin:'0 auto',padding:'20px 24px 60px',...(splitActive?{maxWidth:'none',margin:'0',width:'100%',boxSizing:'border-box',paddingRight:SPLIT_PAD_RIGHT}:{})}}>
 
-      {/* v0.23.1: Lade-Banner — die Felder rendern sofort (leer), der initiale /load-draft füllt sie erst
+      {/* v0.23.2: Lade-Banner — die Felder rendern sofort (leer), der initiale /load-draft füllt sie erst
           nach der Backend-Antwort. Solange sichtbares Feedback auf allen Tabs. */}
       {initialDraftLoading&&!showJson&&<div style={{background:'var(--beige-light)',border:'1px solid var(--sage-light)',borderRadius:8,padding:'12px 16px',marginBottom:16,fontSize:13,color:'#666',display:'flex',alignItems:'center',gap:10}}>
         <span style={{display:'inline-block',width:16,height:16,border:'2px solid rgba(122,139,111,0.3)',borderTopColor:'var(--sage)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite',flexShrink:0}}></span>
