@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.22.0 (Aufgabe 49 · F-4 v1.1 P0+Kür)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.23.0 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -36,6 +36,9 @@
   @media(max-width:600px){.field-row{flex-direction:column!important}.field-half{flex:1 1 100%!important}.tab-btn{font-size:12px!important;padding:10px 8px!important}.month-grid{grid-template-columns:repeat(4,1fr)!important}.cfg-grid{grid-template-columns:1fr!important}}
   /* v0.15: Spinner für Analyse-Status */
   @keyframes ww-spin { to { transform: rotate(360deg); } }
+  /* v0.23.0: animierte Lade-Punkte („…") — feste Breite, damit der Text nicht springt. */
+  .ww-dots::after{display:inline-block;width:1.3em;text-align:left;content:'';animation:ww-dots 1.2s steps(4,end) infinite}
+  @keyframes ww-dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%,100%{content:'...'}}
 </style>
 </head>
 <body>
@@ -1619,10 +1622,13 @@ function App(){
     const res=await fetch(apiBase+path,{method,headers,body:body?JSON.stringify(body):undefined});
     const txt=await res.text();
     let data;
-    try{data=JSON.parse(txt);}catch{data={error:'Antwort kein gültiges JSON: '+txt.substring(0,200)};}
+    try{data=JSON.parse(txt);}catch{data=null;}
     // v0.22.0 (P0/e-D135): 409-Fehlerkontrakt {success:false,error} — der Server-error-Text wird
     // pur durchgereicht (inline-Anzeige beim Aufrufer); HTTP-Präfix nur als Fallback ohne error-Feld.
-    if(!res.ok) throw new Error(data.error||`HTTP ${res.status}: ${txt.substring(0,150)}`);
+    // v0.22.1: Bei ungültigem/leerem Body den HTTP-Status immer mitzeigen — v0.22.0 verschluckte ihn,
+    // weil der Parse-Fallback-Text als Server-error galt ("Antwort kein gültiges JSON:" ohne Status).
+    if(!res.ok) throw new Error((data&&data.error)||`HTTP ${res.status}: ${txt.substring(0,150)||'(leere Antwort)'}`);
+    if(data===null) return {error:'Antwort kein gültiges JSON (HTTP '+res.status+(txt?'): '+txt.substring(0,200):', leere Antwort)')};
     return data;
   },[apiBase,authHeaderName,authHeaderValue]);
 
@@ -2492,9 +2498,13 @@ function App(){
     setLoadListLoading(false);
   };
   const closeLoadModal=()=>{setShowLoadModal(false);setLoadList([]);setLoadListError('');};
-  const pickDraftFromList=(id)=>{
+  const pickDraftFromList=(id,d)=>{
     if(!id) return;
-    window.location.href=window.location.pathname+'?entwurf_id='+encodeURIComponent(id);
+    // v0.23.0: Panel-Hint — die Listenzeile weiß, ob nach dem Laden ein Freigabe-Panel erscheinen wird
+    // (freigabe_status gesetzt, sofern die Liste ihn liefert, oder Entwurfs-Status kandidat_erstellt).
+    // Damit kann das rechte Panel sofort als Lade-Skeleton öffnen, statt nach 6–8 s „aufzupoppen".
+    const hint=d&&(d.freigabe_status||d.status==='kandidat_erstellt')?'&panel=1':'';
+    window.location.href=window.location.pathname+'?entwurf_id='+encodeURIComponent(id)+hint;
   };
 
   // ============== v0.13/0.16: ZURÜCKSPIELEN (Master/Admin → Curator zurück) ==============
@@ -2846,6 +2856,11 @@ function App(){
   // v0.22.0 (P5): bei live kein festes Panel — es gäbe kein PDF darin (403 designgemäß); der Freigabe-Block
   // erscheint dann inline mit Live-Kaufhinweis, das Formular hat wieder volle Breite.
   const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&freigabe.status!=='live'&&!showJson&&(tab==='trip'||tab==='tage');
+  // v0.23.0: Initiales Reise-Laden (URL-Param) läuft noch? Solange zeigt das rechte Panel bei gesetztem
+  // panel=1-Hint (aus der Listenauswahl) ein Lade-Skeleton statt später „aufzupoppen".
+  const urlBoot=(()=>{const p=new URLSearchParams(window.location.search);return{draft:!!p.get('entwurf_id'),panel:p.get('panel')==='1'};})();
+  const initialDraftLoading=urlBoot.draft&&!draftLoadTried&&!!authHeaderValue&&!!currentUserId;
+  const panelSkeleton=initialDraftLoading&&urlBoot.panel&&isWideForSplit&&!showJson&&(tab==='trip'||tab==='tage')&&!splitActive;
   const SPLIT_PANEL_W='min(44vw, 620px)';
   const SPLIT_PAD_RIGHT='calc('+SPLIT_PANEL_W+' + 40px)';
 
@@ -2854,7 +2869,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.22.0 (Aufgabe 49 · F-4 v1.1 P0+Kür)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.23.0 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3050,6 +3065,15 @@ function App(){
           </Section>
         </>;
       })()}
+
+      {/* v0.23.0: Panel-Skeleton — rechtes Panel öffnet sofort beim Laden einer Reise mit erwartetem
+          Kandidaten-Panel (panel=1-Hint) und zeigt Lade-Feedback, bis der echte Freigabe-Block übernimmt.
+          Verschwindet auch, wenn die geladene Reise wider Erwarten kein Panel hat (Hint war nur Vorschau). */}
+      {panelSkeleton&&<div style={{position:'fixed',top:0,right:0,bottom:0,width:SPLIT_PANEL_W,background:'var(--white)',borderLeft:'2px solid #CCC',boxShadow:'-2px 0 14px rgba(0,0,0,0.10)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,zIndex:50}}>
+        <span style={{width:26,height:26,border:'3px solid rgba(122,139,111,0.3)',borderTopColor:'var(--sage)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite'}}></span>
+        <span style={{fontSize:13,color:'#888'}}>Reise wird geladen<span className="ww-dots"></span></span>
+        <span style={{fontSize:11,color:'#BBB'}}>Kandidaten-Panel öffnet nach dem Laden</span>
+      </div>}
 
       {/* v0.20.0 (Aufgabe 49): FREIGABE-BLOCK — einmal über Trip/Tage, sichtbar sobald freigabe_status gesetzt.
           Read-only-Kandidaten-Ansicht (F1: Öffnen-Link + iframe), Aktionen (F2), Freigabe-Badge (F3),
@@ -3850,7 +3874,10 @@ function App(){
             })}
           </div>}
           <div style={{flex:1,overflowY:'auto',padding:16}}>
-            {loadListLoading&&<div style={{textAlign:'center',padding:40,color:'#888',fontSize:13}}>Lade Reisen…</div>}
+            {loadListLoading&&<div style={{textAlign:'center',padding:40,color:'#888',fontSize:13}}>
+              <span style={{display:'inline-block',width:16,height:16,border:'2px solid rgba(122,139,111,0.3)',borderTopColor:'var(--sage)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite',verticalAlign:'-3px',marginRight:8}}></span>
+              Lade Reisen<span className="ww-dots"></span>
+            </div>}
             {!loadListLoading&&loadListError&&<div style={{padding:16,background:'#FFEBEE',color:'#D32F2F',borderRadius:8,fontSize:13}}>Fehler: {loadListError}</div>}
             {!loadListLoading&&!loadListError&&loadList.length===0&&<div style={{textAlign:'center',padding:40,color:'#888',fontSize:13}}>Keine Reisen vorhanden. Lege über das Formular eine neue Reise an und klicke „Speichern".</div>}
             {!loadListLoading&&!loadListError&&loadList.length>0&&(()=>{
@@ -3878,7 +3905,7 @@ function App(){
                   const rejectCmt=d.reject_comment&&String(d.reject_comment).trim()?String(d.reject_comment).trim():'';
                   const isRejected=stat==='zurueckgespielt'||((stat==='entwurf'||stat==='draft')&&rejectCmt);
                   return <div key={d.entwurf_id} style={{background:d.entwurf_id===entwurfId?'var(--sage-light)':isRejected?'#FDECEA':'var(--beige-light)',border:'1px solid '+(d.entwurf_id===entwurfId?'var(--sage)':isRejected?'var(--red)':'#E0E0E0'),borderRadius:8,padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,flexWrap:'wrap',opacity:isDeleting?0.5:1,transition:'opacity 0.2s'}}>
-                    <button onClick={()=>pickDraftFromList(d.entwurf_id)} disabled={isDeleting} style={{flex:1,minWidth:200,textAlign:'left',background:'transparent',border:'none',padding:0,cursor:isDeleting?'wait':'pointer',fontFamily:'inherit',color:'var(--anthrazit)'}}>
+                    <button onClick={()=>pickDraftFromList(d.entwurf_id,d)} disabled={isDeleting} style={{flex:1,minWidth:200,textAlign:'left',background:'transparent',border:'none',padding:0,cursor:isDeleting?'wait':'pointer',fontFamily:'inherit',color:'var(--anthrazit)'}}>
                       <div style={{fontSize:14,fontWeight:600,color:'var(--anthrazit)',marginBottom:4,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                         <span>{ort}</span>
                         {/* v0.13.1: Reject-Markierung im Titel */}
