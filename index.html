@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.21.0 (Aufgabe 49 · F-3a Review-Split-View)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.22.0 (Aufgabe 49 · F-4 v1.1 P0+Kür)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -779,8 +779,10 @@ const ROLE_COLORS={admin:'var(--coral)',curator_master:'var(--sage)',curator:'#8
 //   uebergeben → zurueckgespielt → uebergeben (Überarbeitungsschleife)
 // 'draft' = Alias für 'entwurf' (Backend-Erbe adamare). Umlaut-Schlüssel ('übergeben'/'veröffentlicht')
 // bleiben als REINE LESE-ALIASE erhalten, damit Altzeilen korrekt angezeigt werden; gesendet wird nur ASCII.
-const STATUS_LABELS={entwurf:'Entwurf',draft:'Entwurf',uebergeben:'Übergeben','übergeben':'Übergeben',freigegeben:'Freigegeben',in_generierung:'In Generierung',veroeffentlicht:'Veröffentlicht','veröffentlicht':'Veröffentlicht',zurueckgespielt:'Zurückgespielt',fehler:'Fehler'};
-const STATUS_COLORS={entwurf:'#888',draft:'#888',uebergeben:'#E07A5F','übergeben':'#E07A5F',freigegeben:'#7A8B6F',in_generierung:'#3498DB',veroeffentlicht:'#4CAF50','veröffentlicht':'#4CAF50',zurueckgespielt:'#E6A23C',fehler:'#D32F2F'};
+// v0.22.0 (P0/e-D135): kandidat_erstellt = regulärer Entwurfs-Endzustand nach einem Kandidatenlauf
+// (L-WW-112-Statusmaschine). Korrektur-Wiedereintritt: kandidat_erstellt → uebergeben (via correctionMode).
+const STATUS_LABELS={entwurf:'Entwurf',draft:'Entwurf',uebergeben:'Übergeben','übergeben':'Übergeben',freigegeben:'Freigegeben',in_generierung:'In Generierung',kandidat_erstellt:'Kandidat erstellt',veroeffentlicht:'Veröffentlicht','veröffentlicht':'Veröffentlicht',zurueckgespielt:'Zurückgespielt',fehler:'Fehler'};
+const STATUS_COLORS={entwurf:'#888',draft:'#888',uebergeben:'#E07A5F','übergeben':'#E07A5F',freigegeben:'#7A8B6F',in_generierung:'#3498DB',kandidat_erstellt:'#3498DB',veroeffentlicht:'#4CAF50','veröffentlicht':'#4CAF50',zurueckgespielt:'#E6A23C',fehler:'#D32F2F'};
 const isEditableStatus=(s)=>!s||s==='entwurf'||s==='draft'||s==='zurueckgespielt';
 // v0.20.0 (Aufgabe 49): Freigabe-Achse (freigabe_status) — GETRENNT von der Entwurfs-Achse (status).
 // Werte laut KONTRAKT_c-b_B-3 v1.1 §2/§6: (leer) → kandidat → kurator_freigegeben → live (+ gesperrt).
@@ -1079,8 +1081,11 @@ function App(){
   // Aus der Lade-Strecke gelesen (Kontrakt §4, Spalten CI–CM). Getrennt von der Entwurfs-Achse.
   const[freigabe,setFreigabe]=useState({status:'',reise_id:'',kandidat_pdf_url:'',kandidat_generated_at:'',freigabe_kurator_at:'',freigabe_admin_at:'',pdf_url:''});
   const[lastSeenKandidatAt,setLastSeenKandidatAt]=useState('');   // F5: Referenz für Abweisungs-Erkennung (K-A1)
+  // v0.22.0 (P8): neue PDF-Quelle → Spinner wieder anzeigen, bis das load-Event des iframes feuert.
+  useEffect(()=>{setPdfFrameLoaded(false);},[freigabe.kandidat_pdf_url,freigabe.pdf_url]);
   const[correctionMode,setCorrectionMode]=useState(false);        // F4: Quelle korrigieren + neuer Lauf (Entwurfs-Achse)
   const[promoteBusy,setPromoteBusy]=useState('');                 // '' | 'kurator_freigabe' | 'golive' | 'entsperren' | 'refresh'
+  const[pdfFrameLoaded,setPdfFrameLoaded]=useState(false);        // v0.22.0 (P8): iframe-load-Event empfangen? Reset bei URL-Wechsel (Effect unten).
   const[promoteMsg,setPromoteMsg]=useState(null);                 // null | {kind:'ok'|'err'|'info', text}
   // === v0.21.0 (F-3a): Review-Split-View — Viewport-Breite (Desktop-Ergonomie). ===
   // Ab SPLIT_MIN_PX liegt das Kandidaten-PDF als festes rechtes Panel neben der Reise-/Tage-Eingabe,
@@ -1615,7 +1620,9 @@ function App(){
     const txt=await res.text();
     let data;
     try{data=JSON.parse(txt);}catch{data={error:'Antwort kein gültiges JSON: '+txt.substring(0,200)};}
-    if(!res.ok) throw new Error(`HTTP ${res.status}: ${data.error||txt.substring(0,150)}`);
+    // v0.22.0 (P0/e-D135): 409-Fehlerkontrakt {success:false,error} — der Server-error-Text wird
+    // pur durchgereicht (inline-Anzeige beim Aufrufer); HTTP-Präfix nur als Fallback ohne error-Feld.
+    if(!res.ok) throw new Error(data.error||`HTTP ${res.status}: ${txt.substring(0,150)}`);
     return data;
   },[apiBase,authHeaderName,authHeaderValue]);
 
@@ -2610,6 +2617,32 @@ function App(){
   // Endpoint ist Geschwister von reise-api-ww-v2: <host>/webhook/ww-promote (F6=a).
   const promoteBase=useCallback(()=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/ww-promote',[apiBase]);
 
+  // F5 (K-A1): Freigabe-Zustand neu laden und kandidat_generated_at vergleichen. Unverändert nach einem
+  // Lauf = Gate-Abweisung (reguläres Gate-Verhalten, kein Fehler-Alarm).
+  // v0.22.0 (P6): silent=true → nur State-Refresh nach erfolgreichem Promote (kein eigenes Busy/Feedback,
+  // die Promote-Erfolgsmeldung bleibt stehen). Vor promoteAction definiert, damit es dort aufrufbar ist.
+  const refreshFreigabe=useCallback(async(silent)=>{
+    if(!entwurfId){return;}
+    if(!silent){setPromoteBusy('refresh');setPromoteMsg(null);}
+    try{
+      const d=await apiCall('GET',`/load-draft?entwurf_id=${encodeURIComponent(entwurfId)}&user_id=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(role)}`);
+      if(!(d&&d.success&&d.mode==='single')){throw new Error(d&&d.error?d.error:'Laden fehlgeschlagen.');}
+      const neu=d.kandidat_generated_at||'';
+      setFreigabe(p=>({...p,status:d.freigabe_status||p.status,reise_id:d.reise_id||p.reise_id,kandidat_pdf_url:d.kandidat_pdf_url||p.kandidat_pdf_url,kandidat_generated_at:neu,freigabe_kurator_at:d.freigabe_kurator_at||p.freigabe_kurator_at,freigabe_admin_at:d.freigabe_admin_at||p.freigabe_admin_at,pdf_url:d.pdf_url||p.pdf_url}));
+      if(silent){
+        if(neu&&neu!==lastSeenKandidatAt) setLastSeenKandidatAt(neu);
+      }else if(lastSeenKandidatAt&&neu&&neu===lastSeenKandidatAt){
+        setPromoteMsg({kind:'info',text:'Kein neuer Kandidat — der Lauf wurde vom Gate abgewiesen (regulär).'});
+      }else if(neu&&neu!==lastSeenKandidatAt){
+        setPromoteMsg({kind:'ok',text:'Neuer Kandidat liegt vor.'});
+        setLastSeenKandidatAt(neu);
+      }else{
+        setPromoteMsg({kind:'info',text:'Status aktualisiert.'});
+      }
+    }catch(err){if(!silent){setPromoteMsg({kind:'err',text:'Fehler: '+err.message});}}
+    if(!silent){setPromoteBusy('');}
+  },[apiCall,currentUserId,entwurfId,lastSeenKandidatAt,role]);
+
   // Ein promote-Call. action ∈ {kurator_freigabe, golive, entsperren}. Body: {action, reise_id, role}.
   const promoteAction=useCallback(async(action)=>{
     if(!freigabe.reise_id){setPromoteMsg({kind:'err',text:'Keine reise_id vorhanden — Reise erneut laden (c-Prüfpunkt Kontrakt §4).'});return;}
@@ -2627,31 +2660,12 @@ function App(){
       if(action==='golive') setPromoteMsg({kind:'ok',text:'Live genommen.'+(data.pdf_url?' PDF: '+data.pdf_url:'')});
       else if(action==='entsperren') setPromoteMsg({kind:'ok',text:'Entsperrt — die Reise steht wieder als Kandidat zur Korrektur.'});
       else setPromoteMsg({kind:'ok',text:'Inhalt freigegeben — der Admin nimmt die Reise live.'});
+      // v0.22.0 (P6): Panel-State nach Promote-Erfolg komplett neu laden (Badge, Zeitstempel, PDF-Ableitung
+      // inkl. iframe-Quelle) — analog „Status aktualisieren", aber ohne die Erfolgsmeldung zu überschreiben.
+      await refreshFreigabe(true);
     }catch(err){setPromoteMsg({kind:'err',text:'Fehler: '+err.message});}
     setPromoteBusy('');
-  },[apiBase,authHeaderName,authHeaderValue,canManage,freigabe.reise_id,promoteBase,role]);
-
-  // F5 (K-A1): Freigabe-Zustand neu laden und kandidat_generated_at vergleichen. Unverändert nach einem
-  // Lauf = Gate-Abweisung (reguläres Gate-Verhalten, kein Fehler-Alarm).
-  const refreshFreigabe=useCallback(async()=>{
-    if(!entwurfId){return;}
-    setPromoteBusy('refresh');setPromoteMsg(null);
-    try{
-      const d=await apiCall('GET',`/load-draft?entwurf_id=${encodeURIComponent(entwurfId)}&user_id=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(role)}`);
-      if(!(d&&d.success&&d.mode==='single')){throw new Error(d&&d.error?d.error:'Laden fehlgeschlagen.');}
-      const neu=d.kandidat_generated_at||'';
-      setFreigabe(p=>({...p,status:d.freigabe_status||p.status,reise_id:d.reise_id||p.reise_id,kandidat_pdf_url:d.kandidat_pdf_url||p.kandidat_pdf_url,kandidat_generated_at:neu,freigabe_kurator_at:d.freigabe_kurator_at||p.freigabe_kurator_at,freigabe_admin_at:d.freigabe_admin_at||p.freigabe_admin_at,pdf_url:d.pdf_url||p.pdf_url}));
-      if(lastSeenKandidatAt&&neu&&neu===lastSeenKandidatAt){
-        setPromoteMsg({kind:'info',text:'Kein neuer Kandidat — der Lauf wurde vom Gate abgewiesen (regulär).'});
-      }else if(neu&&neu!==lastSeenKandidatAt){
-        setPromoteMsg({kind:'ok',text:'Neuer Kandidat liegt vor.'});
-        setLastSeenKandidatAt(neu);
-      }else{
-        setPromoteMsg({kind:'info',text:'Status aktualisiert.'});
-      }
-    }catch(err){setPromoteMsg({kind:'err',text:'Fehler: '+err.message});}
-    setPromoteBusy('');
-  },[apiCall,currentUserId,entwurfId,lastSeenKandidatAt,role]);
+  },[apiBase,authHeaderName,authHeaderValue,canManage,freigabe.reise_id,promoteBase,refreshFreigabe,role]);
 
   // F4: Korrektur + neuer Lauf. KEIN eigener Endpoint (Kontrakt §5) — nur Entwurfs-Achse: Felder editierbar
   // machen (correctionMode), Kurator korrigiert die Quelle + nutzt den bestehenden „→ Übergeben".
@@ -2829,7 +2843,9 @@ function App(){
   // festes rechtes Panel), der Viewport breit genug ist und der trip/tage-Kontext im Formular sichtbar ist.
   // Der 403-Zustand (c-F-2 offen) betrifft nur den iframe-Inhalt, nicht die URL → Panel erscheint dennoch.
   const splitPdfUrl=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
-  const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&!showJson&&(tab==='trip'||tab==='tage');
+  // v0.22.0 (P5): bei live kein festes Panel — es gäbe kein PDF darin (403 designgemäß); der Freigabe-Block
+  // erscheint dann inline mit Live-Kaufhinweis, das Formular hat wieder volle Breite.
+  const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&freigabe.status!=='live'&&!showJson&&(tab==='trip'||tab==='tage');
   const SPLIT_PANEL_W='min(44vw, 620px)';
   const SPLIT_PAD_RIGHT='calc('+SPLIT_PANEL_W+' + 40px)';
 
@@ -2838,7 +2854,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.21.0 (Aufgabe 49 · F-3a Review-Split-View)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.22.0 (Aufgabe 49 · F-4 v1.1 P0+Kür)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3043,8 +3059,14 @@ function App(){
         const pdfShown=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
         const istKandidat=st==='kandidat';
         const nichtVeroeffentlicht=st==='kandidat'||st==='kurator_freigegeben';
-        const btn=(label,onClick,busyKey,bg,border,color)=>(
-          <button onClick={onClick} disabled={!!promoteBusy} style={{background:bg,color:color,border:border,padding:'9px 16px',borderRadius:8,fontSize:13,cursor:promoteBusy?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{promoteBusy===busyKey?'…':label}</button>
+        // v0.22.0 (P2): Veraltet-Erkennung ohne Heuristik — Kandidat liegt vor, aber die Entwurfs-Achse
+        // ist wieder unterwegs (Korrekturmodus aktiv oder Entwurf erneut in der Pipeline). Reine
+        // Anzeige-Logik (lesende Verknüpfung beider Status-Achsen, e-D126-Trennung der Aktionen bleibt).
+        const kandidatVeraltet=st==='kandidat'&&(correctionMode||['uebergeben','freigegeben','in_generierung'].includes(tripStatus));
+        // v0.22.0 (P1): busyKey&&… — vorher zeigte busyKey='' im Idle-Zustand (promoteBusy==='') dauerhaft „…".
+        // v0.22.0 (P2): dis = zusätzlich ausgegraut/deaktiviert (veralteter Kandidat).
+        const btn=(label,onClick,busyKey,bg,border,color,dis)=>(
+          <button onClick={onClick} disabled={!!promoteBusy||!!dis} style={{background:bg,color:color,border:border,padding:'9px 16px',borderRadius:8,fontSize:13,cursor:promoteBusy?'wait':dis?'not-allowed':'pointer',fontWeight:600,fontFamily:'inherit',opacity:dis?0.45:1}}>{busyKey&&promoteBusy===busyKey?'…':label}</button>
         );
         const ts=(v)=>{try{return v?new Date(v).toLocaleString('de-DE'):'—';}catch{return v||'—';}};
         return (
@@ -3060,11 +3082,19 @@ function App(){
             {nichtVeroeffentlicht&&<span style={{fontSize:12,color:'var(--coral)',fontWeight:600}}>Kandidat — nicht veröffentlicht</span>}
           </div>
 
-          {/* F1: Kandidaten-PDF read-only — Öffnen-Link primär, iframe darunter (Mobile trägt der Link). */}
-          {pdfShown?<>
+          {/* F1: Kandidaten-PDF read-only — Öffnen-Link primär, iframe darunter (Mobile trägt der Link).
+              v0.22.0 (P5): bei live kein iframe/kein PDF-Button — pdf_url ist designgemäß 403 (Auslieferung
+              nur via WC-Download-Handler). Stattdessen Kaufhinweis; das finale PDF liegt im geschützten Bereich. */}
+          {st==='live'?<div style={{background:'#EAF6EC',border:'1px solid #4CAF50',borderRadius:8,padding:'12px 14px',fontSize:13,color:'#2E7D32'}}>
+            ✅ Diese Reise ist live und kann über <strong>whisperedways.com</strong> gekauft werden. Das finale PDF liegt im geschützten Bereich und wird über den Shop ausgeliefert.
+          </div>:pdfShown?<>
             <a href={pdfShown} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'var(--sage)',color:'var(--white)',padding:'8px 16px',borderRadius:8,fontSize:13,fontWeight:600,textDecoration:'none',marginBottom:10}}>↗ {istKandidat||freigabe.kandidat_pdf_url?'Kandidat-PDF':'PDF'} öffnen</a>
-            {!splitActive&&<div style={{border:'1px solid #E0E0E0',borderRadius:8,overflow:'hidden',background:'#fff'}}>
-              <iframe src={pdfShown} title="Kandidat-PDF" style={{width:'100%',height:'70vh',border:'none',display:'block'}}/>
+            {!splitActive&&<div style={{border:'1px solid #E0E0E0',borderRadius:8,overflow:'hidden',background:'#fff',position:'relative'}}>
+              <iframe src={pdfShown} title="Kandidat-PDF" onLoad={()=>setPdfFrameLoaded(true)} style={{width:'100%',height:'70vh',border:'none',display:'block'}}/>
+              {!pdfFrameLoaded&&<div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10,background:'var(--beige-light)'}}>
+                <span style={{width:22,height:22,border:'3px solid rgba(122,139,111,0.3)',borderTopColor:'var(--sage)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite'}}></span>
+                <span style={{fontSize:12,color:'#888'}}>PDF wird geladen…</span>
+              </div>}
             </div>}
             {splitActive&&<div style={{fontSize:11,color:'#999',margin:'2px 0 4px'}}>PDF rechts im Panel — eigener Scroll.</div>}
           </>:<div style={{background:'var(--beige-light)',border:'1px solid var(--sage-light)',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#888'}}>
@@ -3078,15 +3108,20 @@ function App(){
             <span>Admin/Live: {ts(freigabe.freigabe_admin_at)}</span>
           </div>
 
+          {/* v0.22.0 (P2): Hinweis bei veraltetem Kandidaten während laufender Korrekturschleife. */}
+          {kandidatVeraltet&&<div style={{marginTop:10,fontSize:12,padding:'8px 12px',borderRadius:8,background:'#FFF7E6',border:'1px solid var(--coral)',color:'var(--anthrazit)'}}>
+            ⚠️ Korrektur läuft — der angezeigte Kandidat ist veraltet. Nach dem neuen Lauf „↻ Status aktualisieren".
+          </div>}
           {/* Aktionen je Status */}
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginTop:10,paddingTop:12,borderTop:'1px solid #EEE'}}>
-            {/* kandidat: Inhalt freigeben (alle Rollen) + Korrektur (alle Rollen) */}
-            {st==='kandidat'&&btn('✓ Inhalt freigeben',()=>{if(confirm('Inhalt jetzt freigeben?\n\nDamit bestätigst du, dass der Kandidat inhaltlich in Ordnung ist. Danach nimmt der Admin die Reise live.')) promoteAction('kurator_freigabe');},'kurator_freigabe','var(--sage)','none','var(--white)')}
-            {st==='kandidat'&&btn('✎ Korrektur + neuer Lauf',requestCorrection,'','var(--white)','2px solid var(--coral)','var(--coral)')}
+            {/* kandidat: Inhalt freigeben (alle Rollen) + Korrektur (alle Rollen); v0.22.0 (P2): grau bei veraltetem Kandidaten */}
+            {st==='kandidat'&&btn('✓ Inhalt freigeben',()=>{if(confirm('Inhalt jetzt freigeben?\n\nDamit bestätigst du, dass der Kandidat inhaltlich in Ordnung ist. Danach nimmt der Admin die Reise live.')) promoteAction('kurator_freigabe');},'kurator_freigabe','var(--sage)','none','var(--white)',kandidatVeraltet)}
+            {st==='kandidat'&&btn('✎ Korrektur — nochmals am Entwurf arbeiten',requestCorrection,'','var(--white)','2px solid var(--coral)','var(--coral)',kandidatVeraltet)}
             {/* kurator_freigegeben: Go-Live (Admin/Master) */}
             {st==='kurator_freigegeben'&&canManage&&btn('⚡ Go-Live',()=>{if(confirm('Reise jetzt live nehmen?\n\nPDF-Promote, Post-Tausch, Landingpage, WooCommerce. Danach ist die Reise veröffentlicht.')) promoteAction('golive');},'golive','var(--coral)','none','var(--white)')}
-            {/* entsperren: Admin/Master, aus kurator_freigegeben / live / gesperrt */}
-            {(st==='kurator_freigegeben'||st==='live'||st==='gesperrt')&&canManage&&btn('🔓 Entsperren',()=>{if(confirm('Reise entsperren?\n\nDer Freigabe-Status wird auf „Kandidat" zurückgesetzt, damit die Quelle korrigiert und ein neuer Lauf gestartet werden kann. Live-/Kandidaten-Inhalte bleiben unberührt.')) promoteAction('entsperren');},'entsperren','var(--white)','2px solid var(--anthrazit)','var(--anthrazit)')}
+            {/* entsperren: Admin/Master, aus kurator_freigegeben / live / gesperrt.
+                v0.22.0 (P4): aus live mit verschärftem Bestätigungsdialog (Reise ist kaufbar). */}
+            {(st==='kurator_freigegeben'||st==='live'||st==='gesperrt')&&canManage&&btn('🔓 Entsperren',()=>{const q=st==='live'?'Diese Reise ist live und kaufbar — wirklich entsperren?\n\nDer Freigabe-Status wird auf „Kandidat" zurückgesetzt, damit die Quelle korrigiert und ein neuer Lauf gestartet werden kann. Live-/Kandidaten-Inhalte bleiben unberührt.':'Reise entsperren?\n\nDer Freigabe-Status wird auf „Kandidat" zurückgesetzt, damit die Quelle korrigiert und ein neuer Lauf gestartet werden kann. Live-/Kandidaten-Inhalte bleiben unberührt.';if(confirm(q)) promoteAction('entsperren');},'entsperren','var(--white)','2px solid var(--anthrazit)','var(--anthrazit)')}
             {/* Status aktualisieren (F5) — immer verfügbar */}
             {btn('↻ Status aktualisieren',refreshFreigabe,'refresh','var(--white)','1px solid #CCC','#666')}
           </div>
@@ -3103,9 +3138,14 @@ function App(){
           </div>}
           </div>{/* /Kopf-Bereich (F-3a) */}
           {/* v0.21.0 (F-3a): iframe füllt im Split die Resthöhe des Panels — eigener Scroll-Kontext (PDF scrollt
-              intern), unabhängig vom Seiten-/Formular-Scroll links. Im 403-Zustand (c-F-2 offen) zeigt der Rahmen 403. */}
-          {splitActive&&<div style={{flex:'1 1 auto',minHeight:0,borderTop:'1px solid #E0E0E0',background:'#fff'}}>
-            <iframe src={pdfShown} title="Kandidat-PDF" style={{width:'100%',height:'100%',border:'none',display:'block'}}/>
+              intern), unabhängig vom Seiten-/Formular-Scroll links. Im 403-Zustand (c-F-2 offen) zeigt der Rahmen 403.
+              v0.22.0 (P5): nicht bei live. v0.22.0 (P8): Spinner-Overlay, bis das iframe-load-Event feuert. */}
+          {splitActive&&st!=='live'&&pdfShown&&<div style={{flex:'1 1 auto',minHeight:0,borderTop:'1px solid #E0E0E0',background:'#fff',position:'relative'}}>
+            <iframe src={pdfShown} title="Kandidat-PDF" onLoad={()=>setPdfFrameLoaded(true)} style={{width:'100%',height:'100%',border:'none',display:'block'}}/>
+            {!pdfFrameLoaded&&<div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10,background:'var(--beige-light)'}}>
+              <span style={{width:22,height:22,border:'3px solid rgba(122,139,111,0.3)',borderTopColor:'var(--sage)',borderRadius:'50%',animation:'ww-spin 0.8s linear infinite'}}></span>
+              <span style={{fontSize:12,color:'#888'}}>PDF wird geladen…</span>
+            </div>}
           </div>}
         </div>);
       })()}
@@ -3750,7 +3790,8 @@ function App(){
             <button onClick={handleTransfer} style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>→ Übergeben</button>
           </>}
           {/* v0.16: Master/Admin-Aktionen auf dem geöffneten Entwurf — Gating nach ASCII-Status (Kontrakt WF1 v2). */}
-          {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>approveDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'✓ Freigeben'}</button>}
+          {/* v0.22.0 (P3): „Zur Generierung freigeben" — Abgrenzung zur Freigabe-Achse („Inhalt freigeben" im Panel). */}
+          {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>approveDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'✓ Zur Generierung freigeben'}</button>}
           {canManage&&tripStatus==='uebergeben'&&<button onClick={()=>openRejectModal(entwurfId,tripStatus)} style={{background:'var(--white)',color:'var(--red)',border:'2px solid var(--red)',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>↩ Zurückspielen</button>}
           {/* v0.16: Generieren aktiv (vorher Stub). Nur bei freigegeben. Backend schreibt Roh-Zeile; WP-Publish folgt separat. */}
           {canManage&&tripStatus==='freigegeben'&&<button onClick={()=>generateDraft(entwurfId,tripStatus)} disabled={actionBusy===entwurfId} title="Schreibt die Roh-Zeile. WP-Veröffentlichung (WF3) folgt später separat." style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'10px 20px',borderRadius:8,fontSize:14,cursor:actionBusy===entwurfId?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===entwurfId?'…':'⚡ Generieren'}</button>}
@@ -3861,7 +3902,7 @@ function App(){
                         {STATUS_LABELS[stat]||stat}
                       </span>
                       {/* v0.16: Inline-Freigabe-Aktionen pro Zeile (nur canManage), Gating nach ASCII-Status. */}
-                      {canManage&&stat==='uebergeben'&&<button onClick={()=>approveDraft(d.entwurf_id,stat)} disabled={actionBusy===d.entwurf_id} title="Freigeben" style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:actionBusy===d.entwurf_id?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===d.entwurf_id?'…':'✓ Freigeben'}</button>}
+                      {canManage&&stat==='uebergeben'&&<button onClick={()=>approveDraft(d.entwurf_id,stat)} disabled={actionBusy===d.entwurf_id} title="Zur Generierung freigeben" style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:actionBusy===d.entwurf_id?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===d.entwurf_id?'…':'✓ Zur Generierung freigeben'}</button>}
                       {canManage&&stat==='uebergeben'&&<button onClick={()=>openRejectModal(d.entwurf_id,stat)} title="Zurückspielen" style={{background:'var(--white)',color:'var(--red)',border:'1px solid var(--red)',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>↩ Zurück</button>}
                       {canManage&&stat==='freigegeben'&&<button onClick={()=>generateDraft(d.entwurf_id,stat)} disabled={actionBusy===d.entwurf_id} title="Generieren (schreibt Roh-Zeile; WP-Publish folgt später)" style={{background:'var(--coral)',color:'var(--white)',border:'none',padding:'6px 10px',borderRadius:6,fontSize:11,cursor:actionBusy===d.entwurf_id?'wait':'pointer',fontWeight:600,fontFamily:'inherit'}}>{actionBusy===d.entwurf_id?'…':'⚡ Gen.'}</button>}
                       {/* v0.13: Löschen-Button nur für canManage. Backend-side gilt: veröffentlicht nur Admin. */}
