@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.24.0 (Aufgabe 58 · Tab Bilder [Mock])</title>
+<title>Whispered Ways — Whisperer Onboarding v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1001,7 +1001,7 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
 // arbeitet der Tab gegen einen In-Memory-Store, der den c-Kontrakt 1:1 nachbildet (Bau/Abnahme der
 // UI ohne echten Endpoint). Für den Durchstich (Abnahme §7) nur BILDER_MOCK=false setzen — die UI
 // bleibt unberührt, nur diese Schicht spricht dann den echten Webhook an.
-const BILDER_MOCK=true;
+const BILDER_MOCK=false;
 
 // Enums/Labels aus dem Feldkontrakt (§7).
 const IMG_SOURCE_LABEL={adobe:'Adobe Stock',unsplash:'Unsplash',imago:'imago',own:'Eigenes Bild',whisperer:'Whisperer'};
@@ -1010,10 +1010,12 @@ const IMG_PERSONEN_COLOR={ja:'#8B5E00',nein:'var(--sage-dark)',unbekannt:'#888'}
 // Client-Qualitätsgate (NACHTRAG 2026-09-20 §2 / c-RÜCKLAUF §4): Breite ≥1600 px UND Querformat ≥1,3.
 const IMG_MIN_WIDTH=1600, IMG_MIN_ASPECT=1.3;
 const IMG_MIME_OK=['image/jpeg','image/png','image/webp'];
+// Fehlercodes (c 1a-Härtung) -> lesbare Toasts; Sätze (z.B. Upload-422) fallen unverändert durch.
+const BILD_FEHLER={slots_full:'Alle Alternativplätze sind belegt oder geschützt.',suche_leer:'Keine Treffer für dieses Stichwort.'};
 
 // Webhook-Geschwister zu reise-api-ww-v2 (analog promoteBase). Pfad `wf3bild` ist Annahme bis zum
 // c-Durchstich — im Mock ohne Belang.
-const bilderBaseFrom=(apiBase)=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/wf3bild';
+const bilderBaseFrom=(apiBase)=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/ww-bilder';
 
 // Datei → {dataUrl, mime, breite, hoehe} für Client-Gate + base64-Transport (Feld `datei`, data:-Präfix
 // akzeptiert; c akzeptiert data: oder mime separat). Nutzt die Browser-Bildpipeline wie v0.14.5.
@@ -1143,7 +1145,7 @@ function mockDispatch(store,action,payload,userId){
 function useBilderEndpoint({apiBase,headerName,headerValue,userId,role}){
   const storeRef=useRef(null);
   const call=useCallback(async(action,payload)=>{
-    const body={action,role:toContractRole(role),geaendert_von:userId,...payload};
+    const body={action,role,geaendert_von:userId,...payload}; // v1.2: App-Rolle roh (curator_master|admin), serverseitig erzwungen
     if(BILDER_MOCK){
       if(!storeRef.current) storeRef.current=buildMockStore(payload._scaffold||[{slot_id:'featured',kopf:'',absatz:''}]);
       await new Promise(r=>setTimeout(r,180)); // Latenz simulieren
@@ -1270,6 +1272,11 @@ function BilderUploadModal({slot,onClose,onSubmit,busy}){
 function BilderSlot({slot,kandidaten,showUsed,busyAction,onTausch,onSuche,onUploadOpen,onOpenLightbox}){
   const[open,setOpen]=useState(false);
   const[stich,setStich]=useState('');
+  const rowRef=useRef(null);
+  const[atEnd,setAtEnd]=useState(true);
+  const[scrollable,setScrollable]=useState(false);
+  const checkScroll=()=>{const el=rowRef.current;if(!el)return;setScrollable(el.scrollWidth>el.clientWidth+2);setAtEnd(el.scrollLeft>=el.scrollWidth-el.clientWidth-2);};
+  useEffect(()=>{checkScroll();},[kandidaten,showUsed]);
   const aktiv=kandidaten.find(k=>k.rank===0)||null;
   const hasRank0=!!aktiv;
   // Pool-Regel (§4.4): verwendete Bilder standardmäßig ausblenden, per Schalter einblenden.
@@ -1281,7 +1288,8 @@ function BilderSlot({slot,kandidaten,showUsed,busyAction,onTausch,onSuche,onUplo
       {slot.absatz&&<button onClick={()=>setOpen(o=>!o)} style={{background:'none',border:'1px solid var(--sage-light)',borderRadius:6,padding:'4px 10px',fontSize:11,color:'var(--sage-dark)',cursor:'pointer'}}>{open?'Text ausblenden ▾':'Motiv-Text ▸'}</button>}
     </div>
     {open&&slot.absatz&&<div style={{padding:'0 16px 10px',fontSize:12,color:'#666',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{slot.absatz}</div>}
-    <div style={{padding:'0 16px 16px',display:'flex',gap:12,overflowX:'auto',alignItems:'stretch'}}>
+    <div style={{position:'relative'}}>
+    <div ref={rowRef} onScroll={checkScroll} style={{padding:'0 16px 16px',paddingRight:28,display:'flex',gap:12,overflowX:'auto',alignItems:'stretch'}}>
       {!hasRank0&&<div style={{width:180,flex:'0 0 auto',border:'2px dashed #C9D2BF',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',padding:12,fontSize:11,color:'#999',aspectRatio:'3 / 2'}}>Noch kein Kandidatenlauf — das aktive Bild wird mit dem ersten Lauf gesetzt.</div>}
       {aktiv&&<BilderKachel kandidat={aktiv} aktiv={true} onOpen={onOpenLightbox} onActivate={()=>{}} busy={!!busyAction}/>}
       {alternativen.map(k=><BilderKachel key={slot.slot_id+'_'+k.rank} kandidat={k} aktiv={false} tauschDisabled={!hasRank0} busy={!!busyAction} onOpen={onOpenLightbox} onActivate={()=>onTausch(slot.slot_id,k.rank)}/>)}
@@ -1296,6 +1304,8 @@ function BilderSlot({slot,kandidaten,showUsed,busyAction,onTausch,onSuche,onUplo
         <input value={stich} onChange={e=>setStich(e.target.value)} placeholder="Motiv, Ort, Stimmung …" style={{...iStyle,fontSize:12,padding:'6px 8px'}}/>
         <button disabled={!stich.trim()||suchBusy} onClick={()=>onSuche(slot.slot_id,stich.trim())} style={{background:(!stich.trim()||suchBusy)?'#ccc':'var(--sage)',color:'#fff',border:'none',borderRadius:6,padding:'6px 8px',fontSize:12,fontWeight:600,cursor:(!stich.trim()||suchBusy)?'not-allowed':'pointer'}}>{suchBusy?'Sucht…':'Suchen'}</button>
       </div>
+    </div>
+    {scrollable&&!atEnd&&<div style={{position:'absolute',top:0,right:0,bottom:16,width:40,pointerEvents:'none',background:'linear-gradient(to right, rgba(245,240,235,0), var(--beige-light) 70%)',display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:6,color:'var(--sage-dark)',fontSize:20,fontWeight:700}}>›</div>}
     </div>
   </div>;
 }
@@ -1315,7 +1325,7 @@ function BilderTab({reiseId,reiseOrt,tage,kandidatGeneratedAt,role,userId,apiBas
   const reload=useCallback(async()=>{
     if(!reiseId) return;
     setLoading(true);
-    try{const res=await loadBilder(reiseId,scaffold); if(res&&res.ok!==false) setData(res); else showToast('err',(res&&res.fehler)||'Laden fehlgeschlagen.');}
+    try{const res=await loadBilder(reiseId,scaffold); if(res&&res.ok!==false) setData(res); else showToast('err',(res&&(BILD_FEHLER[res.fehler]||res.fehler))||'Laden fehlgeschlagen.');}
     catch(e){showToast('err','Laden fehlgeschlagen: '+e.message);}
     setLoading(false);
   },[reiseId,scaffold,loadBilder]);
@@ -1332,7 +1342,7 @@ function BilderTab({reiseId,reiseOrt,tage,kandidatGeneratedAt,role,userId,apiBas
     setBusyAction(actionKey);
     try{
       const res=await fn();
-      if(res&&res.ok===false){showToast('err',res.fehler||'Aktion fehlgeschlagen.');}
+      if(res&&res.ok===false){showToast('err',BILD_FEHLER[res.fehler]||res.fehler||'Aktion fehlgeschlagen.');}
       else{if(okMsg)showToast('ok',typeof okMsg==='function'?okMsg(res):okMsg); await reload();}
       return res;
     }catch(e){showToast('err','Fehler: '+e.message);}
@@ -3249,7 +3259,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.24.0 (Aufgabe 58 · Tab Bilder [Mock])</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
