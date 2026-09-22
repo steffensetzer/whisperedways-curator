@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.23.2 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -44,7 +44,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const{useState,useCallback,useEffect,useMemo}=React;
+const{useState,useCallback,useEffect,useMemo,useRef}=React;
 
 // ===================== STORAGE =====================
 const ls=(k,d='')=>{try{const v=localStorage.getItem('ww_'+k);return v===null?d:v;}catch{return d;}};
@@ -991,6 +991,392 @@ function LoginScreen({apiBase,authHeaderName,authHeaderValue,onAuthHeaderValueCh
 }
 
 // ===================== MAIN APP =====================
+// ===================== v0.24.0: AUFGABE 58 — TAB „BILDER" (Kurator-Master) =====================
+// Bildauswahl Variante 2 (e-D164): WF3IMG setzt je Slot das beste Bild (rank 0) + 4 Alternativen
+// (rank 1–4). Der Master sichtet/tauscht hier, ohne c-Eingriff. Kontrakt: c-RÜCKLAUF 2026-09-20
+// (WF3BILD, Feldkontrakt Tab `Bilder` §7). Alle Mutationen laufen über EINEN Webhook WF3BILD mit
+// action-Dispatch (tausch|suche|upload|re_render) + die Leseaktion `get` (c-Neubau, v1.2).
+//
+// ADAPTERSCHICHT: useBilderEndpoint() kapselt loadBilder()+wf3bild(). Solange BILDER_MOCK=true,
+// arbeitet der Tab gegen einen In-Memory-Store, der den c-Kontrakt 1:1 nachbildet (Bau/Abnahme der
+// UI ohne echten Endpoint). Für den Durchstich (Abnahme §7) nur BILDER_MOCK=false setzen — die UI
+// bleibt unberührt, nur diese Schicht spricht dann den echten Webhook an.
+const BILDER_MOCK=false;
+
+// Enums/Labels aus dem Feldkontrakt (§7).
+const IMG_SOURCE_LABEL={adobe:'Adobe Stock',unsplash:'Unsplash',imago:'imago',own:'Eigenes Bild',whisperer:'Whisperer'};
+const IMG_PERSONEN_LABEL={ja:'Personen: ja',nein:'Personen: nein',unbekannt:'Personen: unbekannt'};
+const IMG_PERSONEN_COLOR={ja:'#8B5E00',nein:'var(--sage-dark)',unbekannt:'#888'};
+// Client-Qualitätsgate (NACHTRAG 2026-09-20 §2 / c-RÜCKLAUF §4): Breite ≥1600 px UND Querformat ≥1,3.
+const IMG_MIN_WIDTH=1600, IMG_MIN_ASPECT=1.3;
+const IMG_MIME_OK=['image/jpeg','image/png','image/webp'];
+// Fehlercodes (c 1a-Härtung) -> lesbare Toasts; Sätze (z.B. Upload-422) fallen unverändert durch.
+const BILD_FEHLER={slots_full:'Alle Alternativplätze sind belegt oder geschützt.',suche_leer:'Keine Treffer für dieses Stichwort.'};
+
+// Webhook-Geschwister zu reise-api-ww-v2 (analog promoteBase). Pfad `wf3bild` ist Annahme bis zum
+// c-Durchstich — im Mock ohne Belang.
+const bilderBaseFrom=(apiBase)=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/ww-bilder';
+
+// Datei → {dataUrl, mime, breite, hoehe} für Client-Gate + base64-Transport (Feld `datei`, data:-Präfix
+// akzeptiert; c akzeptiert data: oder mime separat). Nutzt die Browser-Bildpipeline wie v0.14.5.
+function readImageMeta(file){
+  return new Promise((resolve,reject)=>{
+    const fr=new FileReader();
+    fr.onerror=()=>reject(new Error('Datei konnte nicht gelesen werden.'));
+    fr.onload=()=>{
+      const dataUrl=fr.result;
+      const img=new Image();
+      img.onerror=()=>reject(new Error('Bild konnte nicht dekodiert werden.'));
+      img.onload=()=>resolve({dataUrl,mime:file.type,breite:img.naturalWidth,hoehe:img.naturalHeight});
+      img.src=dataUrl;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+// Slot-Gerüst aus den bereits geladenen Reisedaten (c-RÜCKLAUF §1: `get` liefert KEINE Köpfe).
+// featured-Kopf spiegelt reise_ort; Tag-Slots: `tag_n = tag_nummer` (= day_index+1), Kopf = Titel,
+// eingeklappter Absatz = tag_story (Motivkontrolle).
+function bilderScaffold(reiseOrt,tage){
+  const slots=[{slot_id:'featured',kopf:'Titelbild · '+(reiseOrt||'—'),absatz:''}];
+  (tage||[]).forEach(t=>{
+    const n=t.tag_nummer;
+    if(!n) return;
+    slots.push({slot_id:'tag_'+n,kopf:'Tag '+n+(t.tag_titel?': '+t.tag_titel:''),absatz:t.tag_story||''});
+  });
+  return slots;
+}
+
+// ---- Mock-Datenquelle (nur BILDER_MOCK=true) --------------------------------------------------
+// Farbige SVG-Kacheln als data:-URI → Vorschau rendert offline, ohne externe Bildquelle.
+function mockImg(label,color){
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="667">'+
+    '<rect width="1000" height="667" fill="'+color+'"/>'+
+    '<text x="50%" y="50%" fill="#ffffff" font-family="Georgia,serif" font-size="46" '+
+    'text-anchor="middle" dominant-baseline="middle">'+label+'</text></svg>';
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+}
+function mockKandidat(slot_id,rank,source,over){
+  const pal={adobe:'#7A8B6F',unsplash:'#4A90D9',imago:'#B08968',own:'#E07A5F',whisperer:'#8E7CC3'};
+  const base={
+    asset_id:source==='own'?'':source+'_'+slot_id+'_'+rank,
+    rank,source,
+    preview_url:mockImg(IMG_SOURCE_LABEL[source]+' · '+slot_id+' · r'+rank,pal[source]||'#888'),
+    full_url:'', caption:source==='own'?'':IMG_SOURCE_LABEL[source]+'-Motiv '+slot_id,
+    alt_text:slot_id+' – r'+rank, breite:2000, hoehe:1333,
+    personen:source==='own'?'nein':'unbekannt',
+    lizenz_status:source==='own'?'eigenrecht':'offen',
+    verwendet_in:'', verwendet_in_labels:[],
+    urheber:'', rechteinhaber:'', nutzung_bestaetigt:'',
+    geaendert_von:'', geaendert_am:''
+  };
+  if(base.source==='own') base.full_url=base.preview_url;
+  return Object.assign(base,over||{});
+}
+function buildMockStore(scaffold){
+  const store={kandidat_generated_at:new Date(Date.now()-864e5).toISOString(),slots:{}};
+  scaffold.forEach((s,idx)=>{
+    if(s.slot_id==='featured'){
+      store.slots[s.slot_id]=[
+        mockKandidat(s.slot_id,0,'adobe'),
+        mockKandidat(s.slot_id,1,'unsplash'),
+        mockKandidat(s.slot_id,2,'adobe',{lizenz_status:'lizenziert'})
+      ];
+    }else if(idx===1){
+      store.slots[s.slot_id]=[
+        mockKandidat(s.slot_id,0,'unsplash'),
+        mockKandidat(s.slot_id,1,'imago',{verwendet_in:'REISE-0007',verwendet_in_labels:[{reise_id:'REISE-0007',reise_ort:'Andalusien'}]}),
+        mockKandidat(s.slot_id,2,'adobe')
+      ];
+    }else if(idx===2){
+      // Leerzustand am Aktiv-Platz demonstrieren: kein rank 0.
+      store.slots[s.slot_id]=[mockKandidat(s.slot_id,1,'adobe')];
+    }else{
+      store.slots[s.slot_id]=[mockKandidat(s.slot_id,0,'adobe'),mockKandidat(s.slot_id,1,'unsplash')];
+    }
+  });
+  return store;
+}
+function mockDispatch(store,action,payload,userId){
+  const now=new Date().toISOString();
+  const list=store.slots[payload&&payload.slot_id]||[];
+  if(action==='get'){
+    const slots=Object.keys(store.slots).map(sid=>({slot_id:sid,kandidaten:store.slots[sid].map(k=>({...k}))}));
+    return {ok:true,action:'get',reise_id:payload.reise_id,kandidat_generated_at:store.kandidat_generated_at,slots};
+  }
+  if(action==='tausch'){
+    const a=list.find(k=>k.rank===0), b=list.find(k=>k.rank===payload.neuer_rank);
+    if(!a) return {ok:false,action,fehler:'Kein aktives Bild (rank 0) vorhanden.'};
+    if(!b) return {ok:false,action,fehler:'Ziel-Alternative fehlt.'};
+    a.rank=payload.neuer_rank; b.rank=0;
+    a.geaendert_von=userId; a.geaendert_am=now; b.geaendert_von=userId; b.geaendert_am=now;
+    return {ok:true,action:'tausch',reise_id:payload.reise_id,slot_id:payload.slot_id,aktiv_von_rank:payload.neuer_rank,media_id:0,re_render:'ausstehend'};
+  }
+  if(action==='suche'){
+    if((payload.stichwort||'').trim().toLowerCase()==='leer') return {ok:false,action,fehler:'Keine Treffer für dieses Stichwort.'};
+    const keep0=list.filter(k=>k.rank===0);
+    const neu=[1,2,3,4].map(r=>mockKandidat(payload.slot_id,r,r%2?'unsplash':'adobe',{caption:'„'+payload.stichwort+'" – Treffer r'+r}));
+    store.slots[payload.slot_id]=keep0.concat(neu);
+    return {ok:true,action:'suche',reise_id:payload.reise_id,slot_id:payload.slot_id,alternativen:4,quelle:'unsplash'};
+  }
+  if(action==='upload'){
+    let free=[1,2,3,4].find(r=>!list.some(k=>k.rank===r));
+    if(free===undefined){
+      const victim=list.filter(k=>k.rank>=1&&k.source!=='own'&&!k.geaendert_am).sort((x,y)=>y.rank-x.rank)[0];
+      if(!victim) return {ok:false,action,fehler:'Alle Alternativplätze belegt oder geschützt.'};
+      store.slots[payload.slot_id]=list.filter(k=>k!==victim); free=victim.rank;
+    }
+    store.slots[payload.slot_id].push(mockKandidat(payload.slot_id,free,'own',{
+      preview_url:payload.datei, full_url:payload.datei, caption:'',
+      personen:payload.personen, urheber:payload.urheber, rechteinhaber:payload.rechteinhaber,
+      nutzung_bestaetigt:payload.nutzung_bestaetigt, geaendert_von:userId, geaendert_am:now,
+      breite:payload._breite||2000, hoehe:payload._hoehe||1333
+    }));
+    return {ok:true,action:'upload',reise_id:payload.reise_id,slot_id:payload.slot_id,rank:free,media_id:0,lizenz_status:'eigenrecht',hinweis:'Alternative — aktiv setzen via Tausch'};
+  }
+  if(action==='re_render'){
+    store.kandidat_generated_at=now;
+    return {ok:true,action:'re_render',reise_id:payload.reise_id,kandidat_modus:'kandidat',ergebnis:'https://mock.local/pdf-'+payload.reise_id+'.pdf'};
+  }
+  return {ok:false,action,fehler:'Unbekannte action.'};
+}
+
+// Adapter: liefert loadBilder(reiseId, scaffold) + wf3bild(action, payload). Response-Konvention `ok`.
+function useBilderEndpoint({apiBase,headerName,headerValue,userId,role}){
+  const storeRef=useRef(null);
+  const call=useCallback(async(action,payload)=>{
+    const body={action,role,geaendert_von:userId,...payload}; // v1.2: App-Rolle roh (curator_master|admin), serverseitig erzwungen
+    if(BILDER_MOCK){
+      if(!storeRef.current) storeRef.current=buildMockStore(payload._scaffold||[{slot_id:'featured',kopf:'',absatz:''}]);
+      await new Promise(r=>setTimeout(r,180)); // Latenz simulieren
+      return mockDispatch(storeRef.current,action,body,userId);
+    }
+    const headers={'Content-Type':'application/json'};
+    if(headerName&&headerValue) headers[headerName]=headerValue;
+    const res=await fetch(bilderBaseFrom(apiBase),{method:'POST',headers,body:JSON.stringify(body)});
+    const txt=await res.text(); let data; try{data=JSON.parse(txt);}catch{data=null;}
+    // Fehlerkontrakt (c 1a-Härtung): {ok:false, fehler}. Nicht-2xx ohne sauberen Body → generisch.
+    if(!data) throw new Error('HTTP '+res.status+': '+(txt.substring(0,150)||'(leere Antwort)'));
+    return data;
+  },[apiBase,headerName,headerValue,userId,role]);
+  const loadBilder=useCallback((reiseId,scaffold)=>call('get',{reise_id:reiseId,_scaffold:scaffold}),[call]);
+  const wf3bild=useCallback((action,payload)=>call(action,payload),[call]);
+  return {loadBilder,wf3bild};
+}
+
+// ---- Präsentations-Komponenten ---------------------------------------------------------------
+function BilderLightbox({kandidat,onClose}){
+  if(!kandidat) return null;
+  // Quelle = preview_url (c §2: stock full_url leer bis golive; own full_url=preview_url).
+  const src=kandidat.preview_url;
+  return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',zIndex:2000,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}>
+    <div onClick={e=>e.stopPropagation()} style={{maxWidth:'92vw',maxHeight:'92vh',display:'flex',flexDirection:'column',gap:8}}>
+      <img src={src} alt={kandidat.alt_text||''} style={{maxWidth:'92vw',maxHeight:'78vh',objectFit:'contain',borderRadius:8,background:'#fff'}}/>
+      <div style={{background:'var(--white)',borderRadius:8,padding:'10px 14px',fontSize:12,color:'var(--anthrazit)'}}>
+        <div><strong>{IMG_SOURCE_LABEL[kandidat.source]||kandidat.source}</strong>{kandidat.caption?' · '+kandidat.caption:(kandidat.source==='own'&&kandidat.urheber?' · Eigenes Bild — '+kandidat.urheber:'')}</div>
+        <div style={{color:'#888',marginTop:2}}>{kandidat.breite}×{kandidat.hoehe} px · {IMG_PERSONEN_LABEL[kandidat.personen]||''}{kandidat.lizenz_status==='lizenziert'?' · bereits lizenziert':''}</div>
+      </div>
+      <button onClick={onClose} style={{alignSelf:'center',background:'var(--white)',border:'none',borderRadius:8,padding:'8px 20px',fontSize:13,cursor:'pointer',fontWeight:600}}>Schließen</button>
+    </div>
+  </div>;
+}
+
+function BilderBadge({children,bg,color}){
+  return <span style={{display:'inline-block',background:bg,color,fontSize:10,fontWeight:700,padding:'2px 6px',borderRadius:4,lineHeight:1.3}}>{children}</span>;
+}
+
+function BilderKachel({kandidat,aktiv,onActivate,onOpen,busy,tauschDisabled}){
+  const k=kandidat;
+  const kopf=k.source==='own'&&!k.caption?('Eigenes Bild'+(k.urheber?' — '+k.urheber:'')):(k.caption||IMG_SOURCE_LABEL[k.source]||k.source);
+  const verwendet=(k.verwendet_in||'').trim();
+  const label=(k.verwendet_in_labels&&k.verwendet_in_labels[0]&&k.verwendet_in_labels[0].reise_ort)||(verwendet?verwendet.split(',')[0]:'');
+  return <div style={{width:180,flex:'0 0 auto',border:'2px solid '+(aktiv?'var(--sage)':'#E0E0E0'),borderRadius:10,overflow:'hidden',background:'var(--white)',boxShadow:aktiv?'0 2px 10px rgba(122,139,111,0.25)':'0 1px 4px rgba(0,0,0,0.06)',display:'flex',flexDirection:'column'}}>
+    <div onClick={()=>onOpen(k)} title="Vergrößern" style={{position:'relative',cursor:'zoom-in',aspectRatio:'3 / 2',background:'#f2f2f2'}}>
+      <img src={k.preview_url} alt={k.alt_text||''} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+      <div style={{position:'absolute',top:6,left:6,display:'flex',gap:4,flexWrap:'wrap',maxWidth:'88%'}}>
+        {aktiv&&<BilderBadge bg="var(--sage)" color="#fff">aktiv</BilderBadge>}
+        {k.lizenz_status==='lizenziert'&&<BilderBadge bg="#E8F5E9" color="#2E7D32">bereits lizenziert</BilderBadge>}
+        {verwendet&&<BilderBadge bg="var(--yellow)" color="#8B7000">verwendet: {label}</BilderBadge>}
+      </div>
+    </div>
+    <div style={{padding:'8px 10px',display:'flex',flexDirection:'column',gap:6,flex:1}}>
+      <div style={{fontSize:11,fontWeight:700,color:'var(--anthrazit)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={kopf}>{kopf}</div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        <BilderBadge bg="var(--beige)" color="var(--sage-dark)">{IMG_SOURCE_LABEL[k.source]||k.source}</BilderBadge>
+        <BilderBadge bg="var(--beige)" color={IMG_PERSONEN_COLOR[k.personen]||'#888'}>{IMG_PERSONEN_LABEL[k.personen]||k.personen}</BilderBadge>
+      </div>
+      {!aktiv&&<button disabled={busy||tauschDisabled} onClick={()=>onActivate(k)} title={tauschDisabled?'Aktivieren erst möglich, sobald ein aktives Bild (rank 0) existiert':'Dieses Bild aktiv setzen'} style={{marginTop:'auto',background:tauschDisabled?'#ccc':'var(--sage)',color:'#fff',border:'none',borderRadius:6,padding:'6px 8px',fontSize:12,cursor:(busy||tauschDisabled)?'not-allowed':'pointer',fontWeight:600}}>Aktiv setzen</button>}
+      {aktiv&&<div style={{marginTop:'auto',fontSize:10,color:'var(--sage-dark)',textAlign:'center'}}>aktives Bild</div>}
+    </div>
+  </div>;
+}
+
+function BilderUploadModal({slot,onClose,onSubmit,busy}){
+  const[file,setFile]=useState(null);
+  const[meta,setMeta]=useState(null);   // {dataUrl,mime,breite,hoehe}
+  const[urheber,setUrheber]=useState('');
+  const[rechteinhaber,setRechteinhaber]=useState('');
+  const[personen,setPersonen]=useState('');
+  const[bestaetigt,setBestaetigt]=useState(false);
+  const[fehler,setFehler]=useState('');
+  const pick=async(f)=>{
+    setFehler(''); setMeta(null); setFile(f||null);
+    if(!f) return;
+    if(!IMG_MIME_OK.includes(f.type)){setFehler('Format nicht unterstützt — erlaubt: JPG, PNG, WEBP.');return;}
+    try{
+      const m=await readImageMeta(f);
+      const aspect=m.hoehe?m.breite/m.hoehe:0;
+      if(m.breite<IMG_MIN_WIDTH||aspect<IMG_MIN_ASPECT){
+        setFehler('Bild '+m.breite+'×'+m.hoehe+' px — erforderlich: Breite ≥ '+IMG_MIN_WIDTH+' px und Querformat (Seitenverhältnis ≥ '+IMG_MIN_ASPECT+').');
+        setMeta(m); return;
+      }
+      setMeta(m);
+    }catch(e){setFehler(e.message);}
+  };
+  const gateOk=meta&&meta.breite>=IMG_MIN_WIDTH&&(meta.breite/meta.hoehe)>=IMG_MIN_ASPECT;
+  const pflichtOk=urheber.trim()&&rechteinhaber.trim()&&(personen==='ja'||personen==='nein')&&bestaetigt;
+  const canSend=gateOk&&pflichtOk&&!busy;
+  const lbl={display:'block',fontSize:12,fontWeight:600,color:'var(--anthrazit)',margin:'10px 0 4px'};
+  return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:2000,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:'var(--white)',borderRadius:12,padding:'20px 22px',width:460,maxWidth:'100%',boxShadow:'0 8px 30px rgba(0,0,0,0.2)'}}>
+      <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:17,fontWeight:700,color:'var(--sage-dark)'}}>Eigenes Bild hochladen</div>
+      <div style={{fontSize:12,color:'#888',marginTop:2}}>Slot: {slot.kopf}</div>
+      <label style={lbl}>Bilddatei (JPG/PNG/WEBP)</label>
+      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>pick(e.target.files&&e.target.files[0])} style={{fontSize:13}}/>
+      {meta&&<div style={{marginTop:8,display:'flex',gap:10,alignItems:'center'}}>
+        <img src={meta.dataUrl} alt="" style={{width:96,height:64,objectFit:'cover',borderRadius:6,border:'1px solid #E0E0E0'}}/>
+        <div style={{fontSize:11,color:gateOk?'var(--sage-dark)':'var(--red)'}}>{meta.breite}×{meta.hoehe} px · Seitenverhältnis {(meta.breite/meta.hoehe).toFixed(2)}{gateOk?' · Prüfung bestanden':' · Prüfung nicht bestanden'}</div>
+      </div>}
+      <label style={lbl}>Urheber *</label>
+      <input value={urheber} onChange={e=>setUrheber(e.target.value)} style={iStyle} placeholder="Wer hat das Bild erstellt?"/>
+      <label style={lbl}>Rechteinhaber *</label>
+      <input value={rechteinhaber} onChange={e=>setRechteinhaber(e.target.value)} style={iStyle} placeholder="Wer hält die Nutzungsrechte?"/>
+      <label style={lbl}>Personen erkennbar? *</label>
+      <div style={{display:'flex',gap:8}}>
+        {['ja','nein'].map(v=><label key={v} style={{padding:'6px 14px',borderRadius:20,border:'1px solid '+(personen===v?'var(--sage)':'#D0D0D0'),background:personen===v?'var(--sage-light)':'var(--white)',fontSize:13,cursor:'pointer'}}><input type="radio" name="up_pers" checked={personen===v} onChange={()=>setPersonen(v)} style={{display:'none'}}/>{v==='ja'?'Ja':'Nein'}</label>)}
+      </div>
+      <label style={{display:'flex',gap:8,alignItems:'flex-start',margin:'12px 0 4px',fontSize:12,color:'var(--anthrazit)',cursor:'pointer'}}>
+        <input type="checkbox" checked={bestaetigt} onChange={e=>setBestaetigt(e.target.checked)} style={{marginTop:2}}/>
+        <span>Nutzung für PDF + Web bestätigt *</span>
+      </label>
+      {fehler&&<div style={{background:'#FFEBEE',border:'1px solid var(--red)',borderRadius:6,padding:'8px 10px',fontSize:12,color:'var(--red)',marginTop:10}}>{fehler}</div>}
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
+        <button onClick={onClose} style={{background:'var(--white)',border:'1px solid #D0D0D0',borderRadius:8,padding:'8px 16px',fontSize:13,cursor:'pointer'}}>Abbrechen</button>
+        <button disabled={!canSend} onClick={()=>onSubmit({datei:meta.dataUrl,mime:meta.mime,urheber:urheber.trim(),rechteinhaber:rechteinhaber.trim(),nutzung_bestaetigt:'ja',personen,_breite:meta.breite,_hoehe:meta.hoehe})} style={{background:canSend?'var(--coral)':'#ccc',color:'#fff',border:'none',borderRadius:8,padding:'8px 18px',fontSize:13,fontWeight:600,cursor:canSend?'pointer':'not-allowed'}}>{busy?'Lädt…':'Hochladen'}</button>
+      </div>
+      <div style={{fontSize:11,color:'#999',marginTop:10}}>Ohne vollständige Pflichtangaben und bestandene Qualitätsprüfung ist kein Upload möglich (zusätzlich serverseitige Prüfung).</div>
+    </div>
+  </div>;
+}
+
+function BilderSlot({slot,kandidaten,showUsed,busyAction,onTausch,onSuche,onUploadOpen,onOpenLightbox}){
+  const[open,setOpen]=useState(false);
+  const[stich,setStich]=useState('');
+  const rowRef=useRef(null);
+  const[atEnd,setAtEnd]=useState(true);
+  const[scrollable,setScrollable]=useState(false);
+  const checkScroll=()=>{const el=rowRef.current;if(!el)return;setScrollable(el.scrollWidth>el.clientWidth+2);setAtEnd(el.scrollLeft>=el.scrollWidth-el.clientWidth-2);};
+  useEffect(()=>{checkScroll();},[kandidaten,showUsed]);
+  const aktiv=kandidaten.find(k=>k.rank===0)||null;
+  const hasRank0=!!aktiv;
+  // Pool-Regel (§4.4): verwendete Bilder standardmäßig ausblenden, per Schalter einblenden.
+  const alternativen=kandidaten.filter(k=>k.rank>=1).filter(k=>showUsed||!(k.verwendet_in||'').trim()).sort((a,b)=>a.rank-b.rank);
+  const suchBusy=busyAction==='suche:'+slot.slot_id;
+  return <div style={{border:'1px solid #E0E0E0',borderRadius:12,marginBottom:16,background:'var(--beige-light)'}}>
+    <div style={{padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+      <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:15,fontWeight:700,color:'var(--sage-dark)'}}>{slot.kopf}</div>
+      {slot.absatz&&<button onClick={()=>setOpen(o=>!o)} style={{background:'none',border:'1px solid var(--sage-light)',borderRadius:6,padding:'4px 10px',fontSize:11,color:'var(--sage-dark)',cursor:'pointer'}}>{open?'Text ausblenden ▾':'Motiv-Text ▸'}</button>}
+    </div>
+    {open&&slot.absatz&&<div style={{padding:'0 16px 10px',fontSize:12,color:'#666',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{slot.absatz}</div>}
+    <div style={{position:'relative'}}>
+    <div ref={rowRef} onScroll={checkScroll} style={{padding:'0 16px 16px',paddingRight:28,display:'flex',gap:12,overflowX:'auto',alignItems:'stretch'}}>
+      {!hasRank0&&<div style={{width:180,flex:'0 0 auto',border:'2px dashed #C9D2BF',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',padding:12,fontSize:11,color:'#999',aspectRatio:'3 / 2'}}>Noch kein Kandidatenlauf — das aktive Bild wird mit dem ersten Lauf gesetzt.</div>}
+      {aktiv&&<BilderKachel kandidat={aktiv} aktiv={true} onOpen={onOpenLightbox} onActivate={()=>{}} busy={!!busyAction}/>}
+      {alternativen.map(k=><BilderKachel key={slot.slot_id+'_'+k.rank} kandidat={k} aktiv={false} tauschDisabled={!hasRank0} busy={!!busyAction} onOpen={onOpenLightbox} onActivate={()=>onTausch(slot.slot_id,k.rank)}/>)}
+      {/* Upload-Kachel */}
+      <div onClick={()=>onUploadOpen(slot)} style={{width:180,flex:'0 0 auto',border:'2px dashed var(--coral-light)',borderRadius:10,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6,cursor:'pointer',color:'var(--coral)',aspectRatio:'3 / 2',background:'var(--white)'}}>
+        <div style={{fontSize:26,lineHeight:1}}>⬆</div><div style={{fontSize:12,fontWeight:700,textAlign:'center',padding:'0 8px'}}>Eigenes Bild hochladen</div>
+      </div>
+      {/* Neu-suchen-Kachel */}
+      <div style={{width:200,flex:'0 0 auto',border:'2px dashed var(--sage-light)',borderRadius:10,display:'flex',flexDirection:'column',gap:6,padding:12,background:'var(--white)'}}>
+        <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)'}}>🔍 Neu suchen</div>
+        <div style={{fontSize:10,color:'#999'}}>ersetzt nur die Alternativen dieses Slots</div>
+        <input value={stich} onChange={e=>setStich(e.target.value)} placeholder="Motiv, Ort, Stimmung …" style={{...iStyle,fontSize:12,padding:'6px 8px'}}/>
+        <button disabled={!stich.trim()||suchBusy} onClick={()=>onSuche(slot.slot_id,stich.trim())} style={{background:(!stich.trim()||suchBusy)?'#ccc':'var(--sage)',color:'#fff',border:'none',borderRadius:6,padding:'6px 8px',fontSize:12,fontWeight:600,cursor:(!stich.trim()||suchBusy)?'not-allowed':'pointer'}}>{suchBusy?'Sucht…':'Suchen'}</button>
+      </div>
+    </div>
+    {scrollable&&!atEnd&&<div style={{position:'absolute',top:0,right:0,bottom:16,width:40,pointerEvents:'none',background:'linear-gradient(to right, rgba(245,240,235,0), var(--beige-light) 70%)',display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:6,color:'var(--sage-dark)',fontSize:20,fontWeight:700}}>›</div>}
+    </div>
+  </div>;
+}
+
+function BilderTab({reiseId,reiseOrt,tage,kandidatGeneratedAt,role,userId,apiBase,headerName,headerValue,onReRendered}){
+  const{loadBilder,wf3bild}=useBilderEndpoint({apiBase,headerName,headerValue,userId,role});
+  const scaffold=useMemo(()=>bilderScaffold(reiseOrt,tage),[reiseOrt,tage]);
+  const[data,setData]=useState(null);          // {kandidat_generated_at, slots:[{slot_id,kandidaten}]}
+  const[loading,setLoading]=useState(false);
+  const[busyAction,setBusyAction]=useState('');// z.B. 'tausch', 'suche:tag_2', 're_render'
+  const[toast,setToast]=useState(null);        // {kind,msg}
+  const[lightbox,setLightbox]=useState(null);
+  const[uploadSlot,setUploadSlot]=useState(null);
+  const[showUsed,setShowUsed]=useState(false);
+  const showToast=(kind,msg)=>{setToast({kind,msg});setTimeout(()=>setToast(null),6000);};
+
+  const reload=useCallback(async()=>{
+    if(!reiseId) return;
+    setLoading(true);
+    try{const res=await loadBilder(reiseId,scaffold); if(res&&res.ok!==false) setData(res); else showToast('err',(res&&(BILD_FEHLER[res.fehler]||res.fehler))||'Laden fehlgeschlagen.');}
+    catch(e){showToast('err','Laden fehlgeschlagen: '+e.message);}
+    setLoading(false);
+  },[reiseId,scaffold,loadBilder]);
+  useEffect(()=>{reload();},[reload]);
+
+  // Slots im Gerüst-Ordnung; Kandidaten aus `get` je slot_id gemergt.
+  const kandBySlot={};
+  (data&&data.slots||[]).forEach(s=>{kandBySlot[s.slot_id]=s.kandidaten||[];});
+  const genAt=(data&&data.kandidat_generated_at)||kandidatGeneratedAt||'';
+  // E4: aktive Zeile (rank 0) geaendert_am > kandidat_generated_at ⇒ Re-Render ausstehend.
+  const renderPending=scaffold.some(s=>{const k=(kandBySlot[s.slot_id]||[]).find(x=>x.rank===0);return k&&k.geaendert_am&&(!genAt||k.geaendert_am>genAt);});
+
+  const run=async(actionKey,fn,okMsg)=>{
+    setBusyAction(actionKey);
+    try{
+      const res=await fn();
+      if(res&&res.ok===false){showToast('err',BILD_FEHLER[res.fehler]||res.fehler||'Aktion fehlgeschlagen.');}
+      else{if(okMsg)showToast('ok',typeof okMsg==='function'?okMsg(res):okMsg); await reload();}
+      return res;
+    }catch(e){showToast('err','Fehler: '+e.message);}
+    finally{setBusyAction('');}
+  };
+  const onTausch=(slot_id,neuer_rank)=>run('tausch',()=>wf3bild('tausch',{reise_id:reiseId,slot_id,neuer_rank}),'Aktiv gesetzt.');
+  const onSuche=(slot_id,stichwort)=>run('suche:'+slot_id,()=>wf3bild('suche',{reise_id:reiseId,slot_id,stichwort}),r=>'Alternativen neu befüllt'+(r&&r.quelle?' ('+r.quelle+')':'')+'.');
+  const onUpload=async(payload)=>{
+    const res=await run('upload',()=>wf3bild('upload',{reise_id:reiseId,slot_id:uploadSlot.slot_id,...payload}),r=>'Hochgeladen (Rang '+((r&&r.rank)||'?')+') — zum Aktivieren anklicken.');
+    if(res&&res.ok!==false) setUploadSlot(null);
+  };
+  const onReRender=()=>run('re_render',()=>wf3bild('re_render',{reise_id:reiseId}),'Kandidat wird neu gerendert.').then(res=>{if(res&&res.ergebnis&&onReRendered)onReRendered(res.ergebnis);});
+
+  if(!reiseId) return <div style={{padding:'30px 4px',color:'#888',fontSize:14}}>Noch keine Reise mit <code>reise_id</code> geladen. Bitte zuerst eine Reise laden oder anlegen — die Bild-Slots beziehen sich auf die aktuelle Reise.</div>;
+
+  return <div>
+    {BILDER_MOCK&&<div style={{background:'var(--yellow)',border:'1px solid #E6D9A8',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#8B7000',marginBottom:14}}>Mock-Modus aktiv — Daten sind simuliert (Kontrakt c-RÜCKLAUF 2026-09-20). Für den Durchstich <code>BILDER_MOCK=false</code> setzen.</div>}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <button disabled={busyAction==='re_render'} onClick={onReRender} style={{background:'var(--coral)',color:'#fff',border:'none',borderRadius:8,padding:'9px 16px',fontSize:13,fontWeight:600,cursor:busyAction==='re_render'?'wait':'pointer'}}>{busyAction==='re_render'?'Rendert…':'Kandidat neu rendern'}</button>
+        {renderPending&&<span style={{display:'inline-flex',alignItems:'center',gap:6,background:'#FFF3E0',border:'1px solid #E6A23C',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#B26A00'}}>● Ungerenderte Tausche — neu rendern empfohlen</span>}
+      </div>
+      <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--anthrazit)',cursor:'pointer'}}>
+        <input type="checkbox" checked={showUsed} onChange={e=>setShowUsed(e.target.checked)}/> auch bereits verwendete zeigen
+      </label>
+    </div>
+    {loading&&!data&&<div style={{padding:'20px 4px',color:'#888',fontSize:13}}>Lade Bild-Slots…</div>}
+    {scaffold.map(s=><BilderSlot key={s.slot_id} slot={s} kandidaten={kandBySlot[s.slot_id]||[]} showUsed={showUsed} busyAction={busyAction} onTausch={onTausch} onSuche={onSuche} onUploadOpen={setUploadSlot} onOpenLightbox={setLightbox}/>)}
+    <BilderLightbox kandidat={lightbox} onClose={()=>setLightbox(null)}/>
+    {uploadSlot&&<BilderUploadModal slot={uploadSlot} busy={busyAction==='upload'} onClose={()=>setUploadSlot(null)} onSubmit={onUpload}/>}
+    {toast&&<div style={{position:'fixed',top:70,right:20,background:toast.kind==='ok'?'#E8F5E9':'#FFEBEE',border:'1px solid '+(toast.kind==='ok'?'#6B8E5A':'var(--red)'),borderRadius:8,padding:'12px 18px',boxShadow:'0 4px 16px rgba(0,0,0,0.1)',zIndex:2100,fontSize:13,color:toast.kind==='ok'?'#2E7D32':'var(--red)',maxWidth:360}}>{toast.kind==='ok'?'✓ ':'⚠ '}{toast.msg}</div>}
+  </div>;
+}
+
 function App(){
   // Config (mit localStorage-Persistenz)
   const[apiBase,setApiBase]=useState(ls('apiBase','https://n8n-ww.fanbuch.de/webhook/reise-api-ww-v2'));
@@ -2846,7 +3232,7 @@ function App(){
   // weil das Admin-Config-Panel einen "Modus: JSON-Vorschau"-Schalter hat, der den
   // Save-Handler in den JSON-Vorschau-Modus zwingt. Dieser Pfad ist Admin-only und
   // verlässt die Vorschau über den "← Zurück zum Formular"-Button im JSON-View.
-  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'},...(canManage?[{id:'admin',label:'Admin',icon:'⚙️'}]:[])];
+  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'},...(canManage?[{id:'bilder',label:'Bilder',icon:'🖼️'},{id:'admin',label:'Admin',icon:'⚙️'}]:[])];
 
   // Render-Gate: ohne eingeloggten User wird der Login-Screen gezeigt, App-UI bleibt verborgen.
   if(!currentUser){
@@ -2859,7 +3245,7 @@ function App(){
   const splitPdfUrl=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
   // v0.22.0 (P5): bei live kein festes Panel — es gäbe kein PDF darin (403 designgemäß); der Freigabe-Block
   // erscheint dann inline mit Live-Kaufhinweis, das Formular hat wieder volle Breite.
-  const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&freigabe.status!=='live'&&!showJson&&(tab==='trip'||tab==='tage');
+  const splitActive=isWideForSplit&&!!splitPdfUrl&&!!freigabe.status&&freigabe.status!=='live'&&!showJson&&(tab==='trip'||tab==='tage'||tab==='bilder');
   // v0.23.0: Initiales Reise-Laden (URL-Param) läuft noch? Solange zeigt das rechte Panel bei gesetztem
   // panel=1-Hint (aus der Listenauswahl) ein Lade-Skeleton statt später „aufzupoppen".
   const urlBoot=(()=>{const p=new URLSearchParams(window.location.search);return{draft:!!p.get('entwurf_id'),panel:p.get('panel')==='1'};})();
@@ -2873,7 +3259,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.23.2 (Aufgabe 49 · F-4 v1.1 P0+Kür + Lade-Feedback)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3089,7 +3475,7 @@ function App(){
       {/* v0.20.0 (Aufgabe 49): FREIGABE-BLOCK — einmal über Trip/Tage, sichtbar sobald freigabe_status gesetzt.
           Read-only-Kandidaten-Ansicht (F1: Öffnen-Link + iframe), Aktionen (F2), Freigabe-Badge (F3),
           Status-aktualisieren (F5). Kein Editier-Element hier (Brief §b1). */}
-      {!showJson&&(tab==='trip'||tab==='tage')&&freigabe.status&&(()=>{
+      {!showJson&&((tab==='trip'||tab==='tage')||(tab==='bilder'&&splitActive))&&freigabe.status&&(()=>{
         const st=freigabe.status;
         const pdfShown=freigabe.kandidat_pdf_url||freigabe.pdf_url||'';
         const istKandidat=st==='kandidat';
@@ -3671,6 +4057,21 @@ function App(){
         <div style={{textAlign:'center',marginTop:12}}><button onClick={addTag} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 24px',borderRadius:8,fontSize:14,cursor:'pointer'}}>+ Tag hinzufügen</button></div>
         </fieldset>
       </>}
+
+      {/* v0.24.0 (Aufgabe 58): TAB BILDER — nur curator_master/admin (canManage). Inhalt im
+          Hauptbereich; das Kandidaten-PDF bleibt als rechtes Split-Panel (E1, Motivkontrolle). */}
+      {!showJson&&tab==='bilder'&&canManage&&<BilderTab
+        reiseId={freigabe.reise_id}
+        reiseOrt={trip.reise_ort}
+        tage={tage}
+        kandidatGeneratedAt={freigabe.kandidat_generated_at}
+        role={role}
+        userId={currentUserId}
+        apiBase={apiBase}
+        headerName={authHeaderName}
+        headerValue={authHeaderValue}
+        onReRendered={(pdfUrl)=>setFreigabe(p=>({...p,kandidat_pdf_url:pdfUrl||p.kandidat_pdf_url,kandidat_generated_at:new Date().toISOString()}))}
+      />}
 
       {/* v0.17.0: ADMIN-TAB — globaler Wortbudget-Default (nur admin/curator_master). */}
       {!showJson&&tab==='admin'&&canManage&&(()=>{
