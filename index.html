@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.25.0 (L-WW-128 · Places-Picker-Warnhinweis)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -633,8 +633,48 @@ function ProfilfotoUploader({value=[],onChange,uploadFn,max=3,disabled=false}){
 const HOTEL_STATUS_META={
   analysiert:     {label:'Analysiert',             icon:'✓', bg:'#E8F5E9', border:'var(--green)', fg:'#2E7D32'},
   entwurf:        {label:'Analyse ausstehend',     icon:'◔', bg:'#FFF8DC', border:'#FFC107',      fg:'#8A6D00'},
-  analyse_fehler: {label:'Analyse fehlgeschlagen', icon:'⚠', bg:'#FFEBEE', border:'var(--red)',   fg:'var(--red)'}
+  analyse_fehler: {label:'Analyse fehlgeschlagen', icon:'⚠', bg:'#FFEBEE', border:'var(--red)',   fg:'var(--red)'},
+  // v0.25.0 (L-WW-128, F6a): c-R5 (L-WW-125) führt `mehrdeutig` ein — als Status und/oder als grund-Wert.
+  // Hier als Statuswert bekannt gemacht; grund wird zusätzlich bei jedem Status angezeigt (Fertig-View).
+  mehrdeutig:     {label:'Zuordnung mehrdeutig',   icon:'≈', bg:'#FFF3E0', border:'#FB8C00',      fg:'#B85C00'}
 };
+
+// ===================== v0.25.0: L-WW-128 — NAMENSPRÜFUNG PLACES-PICKER =====================
+// Abweichungsregel = c-R1 (Wortmengen-Regel, L-WW-125): gleiches Objekt nur bei identischer
+// Menge UNTERSCHEIDENDER Wörter. Faltung, Tokenisierung und Stoppwortliste 1:1 aus
+// WF5 „Pick Best Match" (Hotel-Strang, Export 2026-10-07): l125Fold (Akzente gefaltet, ä/ö/ü/ß
+// bleiben), Trennung an [^a-z0-9äöüß]+ (Bindestrich trennt: „D-Frost" ≠ „Dfrost"), Wörter ≥ 2 Zeichen.
+// ⚠ SYNC-AUFLAGE (e-D116, erweitert e-D191): R1_STOPWORDS und r1Fold sind eine KOPIE der c-Stellen
+// (WF5 Pick Best Match; GATE/STOPWORDS-Listen in WF1/WF7/WF8/WF10). Bei jedem c-GATE-/Stoppwort-
+// Patch diese Stelle mitziehen.
+const R1_STOPWORDS=new Set([
+  'hotel','hotels','hotell','motel','resort','resorts','hostel','pension',
+  'aparthotel','apartment','apartments','appartement','appartements',
+  'suites','suite','inn','spa','camping','campingplatz','guesthouse',
+  'gasthaus','gasthof','herberge','ferienwohnung','ferienwohnungen',
+  'the','das','der','die','den','dem','ein','eine','le','la','les','el',
+  'los','las','il','lo','de','del','di','du','des','von','van','and','und'
+]);
+function r1Fold(s){
+  return String(s||'').toLowerCase()
+    .replace(/[àáâãåā]/g,'a').replace(/[èéêëē]/g,'e')
+    .replace(/[ìíîïī]/g,'i').replace(/[òóôõøō]/g,'o')
+    .replace(/[ùúûū]/g,'u').replace(/ç/g,'c').replace(/ñ/g,'n')
+    .replace(/ÿ/g,'y').replace(/œ/g,'oe').replace(/æ/g,'ae');
+}
+function r1Tokens(raw){
+  return new Set(r1Fold(raw).split(/[^a-z0-9äöüß]+/).filter(t=>t.length>=2&&!R1_STOPWORDS.has(t)));
+}
+// true = Hinweis + Bestätigung vor Übernahme. Konservativ: hat eine Seite KEIN unterscheidendes
+// Wort (z. B. nur „Hotel"), ist keine Bestätigung über den Namen möglich → Hinweis (analog c: kein_namensmatch).
+function r1Abweichung(eingabe,kandidat){
+  const a=r1Tokens(eingabe), b=r1Tokens(kandidat);
+  if(a.size===0||b.size===0) return true;
+  if(a.size!==b.size) return true;
+  for(const w of a) if(!b.has(w)) return true;
+  return false;
+}
+
 // Defensive Anzeige: Werte außerhalb des bekannten Satzes werden als Rohwert sichtbar
 // durchgereicht statt verschluckt (gleiche Leitidee wie Tagtyp-Dropdown, F5/v0.18.3).
 // Rückgabe null = kein Statuswert bekannt (noch nicht geladen / Endpoint liefert nichts)
@@ -650,7 +690,7 @@ function hotelStatusMeta(raw){
 // v0.18.4: neuer Prop `statusInfo` = {status, grund} aus der Hotels-DB (via /hotel-single
 // beim Entwurf-Laden bzw. direkt aus dem DB-Treffer bei pickDbHotel). Optional — fehlt er,
 // verhält sich das Panel wie vor v0.18.4.
-function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPlaces,onPickGoogle,onCancel,onReset}){
+function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPlaces,onPickGoogle,onSelectGoogle,onConfirmCancel,onCancel,onReset}){
   const phase=state?.phase||'idle';
   const ortHint=trip.region_land||'';
   const hotel=trip.hotels[hi];
@@ -682,6 +722,13 @@ function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPla
         </div>}
         {meta&&meta.key==='entwurf'&&<div style={{fontSize:11,color:'#8A6D00',marginTop:6}}>
           Der Datensatz liegt in der Hotel-Datenbank, ist aber noch nicht analysiert.
+        </div>}
+        {meta&&meta.key==='mehrdeutig'&&<div style={{fontSize:11,color:'#B85C00',marginTop:6,lineHeight:1.5}}>
+          Die Google-Zuordnung ist nicht eindeutig. Bitte prüfen, ob das richtige Hotel gebunden ist — sonst „Anderes Hotel wählen".
+        </div>}
+        {/* v0.25.0 (L-WW-128, F6a): grund bei jedem Status sichtbar (analyse_fehler zeigt ihn oben im eigenen Block). */}
+        {grund&&!(meta&&meta.key==='analyse_fehler')&&<div style={{fontSize:11,color:'#666',marginTop:6}}>
+          <strong>Grund:</strong> {grund}
         </div>}
       </div>;
     }
@@ -753,7 +800,10 @@ function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPla
   if(phase==='places_results'){
     return <div style={{padding:10,background:'var(--beige-light)',borderRadius:6,fontSize:12}}>
       <div style={{fontWeight:700,marginBottom:8,color:'var(--coral)',fontSize:13}}>🌐 Google Places — Hotel auswählen, um Analyse zu starten:</div>
-      {state.placesResults.map((c,i)=><div key={i} className="hcard" onClick={()=>onPickGoogle(hi,c)} style={{display:'flex',gap:10,alignItems:'stretch'}}>
+      {/* v0.25.0 (L-WW-128): Auswahl läuft über onSelectGoogle (Namensprüfung R1). Bei Abweichung
+          erscheint unter dem Kandidaten ein Bestätigungs-Panel; erst „Trotzdem übernehmen" ruft onPickGoogle. */}
+      {state.placesResults.map((c,i)=><React.Fragment key={i}>
+      <div className="hcard" onClick={()=>onSelectGoogle(hi,c,i)} style={{display:'flex',gap:10,alignItems:'stretch'}}>
         <div style={{flex:'1 1 auto',minWidth:0}}>
           <div style={{fontWeight:600}}>{c.name}</div>
           <div style={{fontSize:11,color:'#666'}}>{c.address}</div>
@@ -761,9 +811,30 @@ function HotelSearchPanel({hi,state,trip,statusInfo,onStart,onPickDb,onSearchPla
           {c.editorial&&<div style={{fontSize:11,color:'#888',marginTop:2,fontStyle:'italic'}}>{c.editorial}</div>}
         </div>
         <div style={{flexShrink:0,display:'flex',alignItems:'center'}}>
-          <button onClick={(e)=>{e.stopPropagation();onPickGoogle(hi,c);}} style={{background:'var(--coral)',color:'var(--white)',border:'none',borderRadius:6,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>Wählen & analysieren →</button>
+          <button onClick={(e)=>{e.stopPropagation();onSelectGoogle(hi,c,i);}} style={{background:'var(--coral)',color:'var(--white)',border:'none',borderRadius:6,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>Wählen & analysieren →</button>
         </div>
-      </div>)}
+      </div>
+      {state.confirmIdx===i&&<div style={{margin:'-2px 0 10px',padding:10,background:'#FFF3E0',border:'1px solid #FB8C00',borderRadius:6,fontSize:12}}>
+        <div style={{fontWeight:700,color:'#B85C00',marginBottom:6}}>⚠ Name weicht ab — ist das dasselbe Hotel?</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:10,marginBottom:6}}>
+          <div style={{flex:'1 1 200px',minWidth:0,background:'var(--white)',border:'1px solid #E0D6C8',borderRadius:4,padding:'6px 8px'}}>
+            <div style={{fontSize:10,color:'#888',textTransform:'uppercase',letterSpacing:0.5}}>Gesucht</div>
+            <div style={{fontWeight:600,wordBreak:'break-word'}}>{state.query||'—'}</div>
+          </div>
+          <div style={{flex:'1 1 200px',minWidth:0,background:'var(--white)',border:'1px solid #E0D6C8',borderRadius:4,padding:'6px 8px'}}>
+            <div style={{fontSize:10,color:'#888',textTransform:'uppercase',letterSpacing:0.5}}>Google Places</div>
+            <div style={{fontWeight:600,wordBreak:'break-word'}}>{c.name}</div>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:'#666',marginBottom:8,lineHeight:1.5}}>
+          Bei Übernahme wird der eingegebene Name durch den Google-Namen ersetzt und das Hotel analysiert. Nur bestätigen, wenn es sicher dasselbe Hotel ist.
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <button onClick={()=>onPickGoogle(hi,c)} style={{background:'var(--coral)',color:'var(--white)',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,fontWeight:700,cursor:'pointer'}}>Trotzdem übernehmen</button>
+          <button onClick={()=>onConfirmCancel(hi)} style={{background:'none',border:'1px solid #999',borderRadius:6,padding:'6px 14px',fontSize:12,color:'#666',cursor:'pointer'}}>Abbrechen</button>
+        </div>
+      </div>}
+      </React.Fragment>)}
       <div style={{marginTop:8}}>
         <button onClick={()=>onCancel(hi)} style={{background:'none',border:'1px solid #999',borderRadius:6,padding:'4px 12px',color:'#666',cursor:'pointer',fontSize:11}}>Abbrechen</button>
       </div>
@@ -2417,7 +2488,8 @@ function App(){
 
   const searchPlaces=async(hi,name,ortHint)=>{
     const ref=trip.hotels[hi]?.ref;
-    setHS(ref,{phase:'searching_places'});
+    // v0.25.0 (L-WW-128, F1b): Suchtext merken — Vergleichsbasis der Namensprüfung (Feld bleibt editierbar).
+    setHS(ref,{phase:'searching_places',query:(name||'').trim(),confirmIdx:null});
     try{
       const r=await apiCall('GET',`/hotel-places-search?hotel_name=${encodeURIComponent(name)}&hotel_ort=${encodeURIComponent(ortHint||'')}`);
       if(r.success&&r.candidates&&r.candidates.length>0){
@@ -2441,7 +2513,7 @@ function App(){
 
   const pickGoogleCandidate=async(hi,cand)=>{
     const ref=trip.hotels[hi]?.ref;
-    setHS(ref,{phase:'preparing'});
+    setHS(ref,{phase:'preparing',confirmIdx:null});
     const parsed=parseGoogleAddress(cand.address);
     const cc=getCountryCodeForLand();
     const ort=parsed.ort||'';
@@ -2567,7 +2639,17 @@ function App(){
     }
   };
 
-  const cancelHotelSearch=(hi)=>setHS(trip.hotels[hi]?.ref,{phase:'idle',dbResults:[],placesResults:[],error:''});
+  const cancelHotelSearch=(hi)=>setHS(trip.hotels[hi]?.ref,{phase:'idle',dbResults:[],placesResults:[],error:'',confirmIdx:null});
+
+  // v0.25.0 (L-WW-128): Places-Auswahl mit Namensprüfung. Gleiche Wortmenge → direkte Übernahme (wie bisher);
+  // Abweichung → Bestätigungs-Panel unter dem Kandidaten (confirmIdx). pickDbHotel bleibt ungeprüft (F3).
+  const selectGoogleCandidate=(hi,cand,idx)=>{
+    const ref=trip.hotels[hi]?.ref;
+    const q=(hotelSearch[ref]&&hotelSearch[ref].query)||'';
+    if(r1Abweichung(q,cand&&cand.name)){setHS(ref,{confirmIdx:idx});return;}
+    pickGoogleCandidate(hi,cand);
+  };
+  const cancelGoogleConfirm=(hi)=>setHS(trip.hotels[hi]?.ref,{confirmIdx:null});
 
   // Hotel zurücksetzen (für "Anderes Hotel wählen") — leert IDs/Adresse, behält ref + name + Annotations
   // damit der Such-Button direkt wieder aktiv ist (User kann Namen editieren oder direkt suchen).
@@ -3259,7 +3341,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.24.1 (Aufgabe 58 · Durchstich WF3BILD v1.2)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.25.0 (L-WW-128 · Places-Picker-Warnhinweis)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3645,6 +3727,8 @@ function App(){
                 onPickDb={pickDbHotel}
                 onSearchPlaces={searchPlaces}
                 onPickGoogle={pickGoogleCandidate}
+                onSelectGoogle={selectGoogleCandidate}
+                onConfirmCancel={cancelGoogleConfirm}
                 onCancel={cancelHotelSearch}
                 onReset={resetHotel}
               />
