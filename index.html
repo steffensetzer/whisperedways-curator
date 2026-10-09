@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.26.0 (L-WW-132 · Abreisetag Vornacht)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.26.2 (Aufgabe 55 · Interview WF-INT)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -234,7 +234,16 @@ function InfoI({feldKey,fallback}){
     </>}
   </span>;
 }
-function Field({label,badge,hint,children,half,info}){return <div className={half?'field-half':''} style={{marginBottom:16,flex:half?'1 1 calc(50% - 8px)':'1 1 100%',minWidth:half?200:'auto'}}><div style={{marginBottom:4,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4}}><label style={{fontSize:13,fontWeight:600}}>{label}</label>{badge&&<Badge type={badge}/>}{info&&<InfoI feldKey={info}/>}</div>{hint&&<div style={{fontSize:11,color:'#888',marginBottom:4}}>{hint}</div>}{children}</div>;}
+// v0.26.1 (Brief e→b 2026-10-09 B2.4): Markierung „Vorschlag aus Interview“. Begründung als Tooltip,
+// ✓ bestätigt (entfernt die Markierung). Ändern des Feldes entfernt sie ebenfalls (setT/updateTag in App).
+function ImpMark({mark}){
+  if(!mark) return null;
+  return <span title={'Vorschlag aus Interview — '+(mark.grund||'ohne Begründung')} style={{display:'inline-flex',alignItems:'center',gap:4,background:'var(--coral-light)',color:'#8A3A24',border:'1px solid var(--coral)',borderRadius:4,padding:'1px 6px',fontSize:10,fontWeight:700,letterSpacing:0.2,cursor:'help'}}>
+    Vorschlag aus Interview
+    {mark.onOk&&<button type="button" onClick={e=>{e.preventDefault();e.stopPropagation();mark.onOk();}} title="Vorschlag bestätigen (Markierung entfernen)" style={{border:'none',background:'var(--white)',color:'var(--sage-dark)',borderRadius:3,fontSize:10,fontWeight:700,padding:'0 4px',cursor:'pointer',lineHeight:'14px'}}>✓</button>}
+  </span>;
+}
+function Field({label,badge,hint,children,half,info,mark}){return <div className={half?'field-half':''} style={{marginBottom:16,flex:half?'1 1 calc(50% - 8px)':'1 1 100%',minWidth:half?200:'auto',...(mark?{outline:'2px dashed var(--coral-light)',outlineOffset:4,borderRadius:4}:{})}}><div style={{marginBottom:4,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4}}><label style={{fontSize:13,fontWeight:600}}>{label}</label>{badge&&<Badge type={badge}/>}{info&&<InfoI feldKey={info}/>}<ImpMark mark={mark}/></div>{hint&&<div style={{fontSize:11,color:'#888',marginBottom:4}}>{hint}</div>}{children}</div>;}
 
 function TI({placeholder,value,onChange}){return <input style={iStyle} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
 function TA({placeholder,rows=3,value,onChange}){return <textarea style={{...iStyle,resize:'vertical'}} rows={rows} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
@@ -417,11 +426,12 @@ function MonthSel({value={},onChange}){
   return <div className="month-grid" style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:6}}>{ms.map((m,i)=>{const st=value[m]||0;return <button key={m} onClick={()=>{const next={...value};next[m]=(st+1)%4;onChange(next);}} style={{padding:'6px 4px',border:'1px solid #D0D0D0',borderRadius:6,background:cols[st],cursor:'pointer',fontSize:12,fontWeight:600,color:st===3?'#fff':'#3D3D3D'}}>{labels[i]}<br/><span style={{fontSize:9}}>{lbs[st]}</span></button>})}</div>;
 }
 
-function InsiderField({title,number,hint,placeholder,rows=4,value,onChange}){
-  return <div style={{background:'var(--beige-light)',borderRadius:8,padding:14,marginBottom:16,border:'1px solid var(--sage-light)'}}>
+function InsiderField({title,number,hint,placeholder,rows=4,value,onChange,mark}){
+  return <div style={{background:'var(--beige-light)',borderRadius:8,padding:14,marginBottom:16,border:mark?'2px dashed var(--coral)':'1px solid var(--sage-light)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
       <span style={{background:'var(--sage)',color:'var(--white)',borderRadius:'50%',width:22,height:22,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>F{number}</span>
       <span style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:14,fontWeight:600,color:'var(--sage)'}}>{title}</span>
+      <ImpMark mark={mark}/>
       {/* v0.14: KI-enriched-Badge entfernt (Anglizismus-Sweep). Der Hinweis "Stichworte reichen — KI formuliert daraus Text" unten bleibt erhalten, weil er erklärt, wie das Feld funktioniert. */}
     </div>
     <div style={{fontSize:11,color:'#888',marginBottom:6}}>{hint}</div>
@@ -1613,8 +1623,13 @@ function App(){
     emotional_tags_json:'',
     analyse_emotional_at:''
   });
-  const setT=(key,val)=>setTrip(p=>({...p,[key]:val}));
-  const setMatch=(key,val)=>setTrip(p=>({...p,match:{...p.match,[key]:val}}));
+  // v0.26.1 (B2.4): offene Interview-Markierungen auf Reise-Ebene, Schlüssel = Formular-Key
+  // (z. B. 'reise_ort', 'match.pace', 'hotels'). Tag-Markierungen liegen in tage[i]._marks
+  // (wandern beim Verschieben mit; buildPayload sendet _marks nicht, da Whitelist).
+  const[marks,setMarks]=useState({});
+  const dropMark=(m,key)=>{let ch=false;const n={};Object.keys(m).forEach(k=>{if(k===key||k.startsWith(key+'.')||key.startsWith(k+'.')){ch=true;return;}n[k]=m[k];});return ch?n:m;};
+  const setT=(key,val)=>{setTrip(p=>({...p,[key]:val}));setMarks(m=>dropMark(m,key));};
+  const setMatch=(key,val)=>{setTrip(p=>({...p,match:{...p.match,[key]:val}}));setMarks(m=>dropMark(m,'match.'+key));};
 
   // WHISPERER STATE
   const[whisperer,setWhisperer]=useState({
@@ -1909,7 +1924,13 @@ function App(){
   };
 
   // === TAG ===
-  const updateTag=(idx,key,val)=>setTage(p=>{const n=[...p];n[idx]={...n[idx],[key]:val};return n;});
+  // v0.26.1 (B2.4): Ändern eines Tagesfeldes entfernt dessen Interview-Markierung.
+  const dropTagMark=(tag,key)=>{
+    if(!tag||!tag._marks) return tag;
+    const m={};Object.keys(tag._marks).forEach(k=>{if(k===key||k.startsWith(key+'.')||k.startsWith(key+'['))return;m[k]=tag._marks[k];});
+    return {...tag,_marks:m};
+  };
+  const updateTag=(idx,key,val)=>setTage(p=>{const n=[...p];n[idx]=dropTagMark({...n[idx],[key]:val},key==='unterkunft_modus'?'hotel_ref':key);return n;});
   // v0.26.0 (L-WW-132, Brief e→b 2026-10-09 B5): Abreisetag = Tag mit tag_typ 'abreisetag' (Entscheid Steffen).
   // Dort gilt immer die Unterkunft der Vornacht (e-D185): hotel_ref wird aus dem Vortag abgeleitet, nie
   // aus der eigenen Auswahl — die leere Auswahl kann dort kein Hotel A mehr erzeugen. Zusätzlich je Tag
@@ -1976,7 +1997,7 @@ function App(){
   };
 
   // STOPP
-  const updateStopp=(tagIdx,stoppIdx,key,val)=>setTage(p=>{const n=[...p];const s=[...n[tagIdx].stopps];s[stoppIdx]={...s[stoppIdx],[key]:val};n[tagIdx]={...n[tagIdx],stopps:s};return n;});
+  const updateStopp=(tagIdx,stoppIdx,key,val)=>setTage(p=>{const n=[...p];const s=[...n[tagIdx].stopps];s[stoppIdx]={...s[stoppIdx],[key]:val};n[tagIdx]=dropTagMark({...n[tagIdx],stopps:s},`stopps[${stoppIdx}].${key}`);return n;});
   const addStopp=(tagIdx)=>{
     const newIdx=(tage[tagIdx]?.stopps?.length)||0;
     const pos=maxPosition(tage[tagIdx])+1;
@@ -1996,7 +2017,7 @@ function App(){
   };
 
   // FOOD/DRINK (Backend-Feld bleibt 'restaurants')
-  const updateRest=(tagIdx,rIdx,key,val)=>setTage(p=>{const n=[...p];const r=[...n[tagIdx].restaurants];r[rIdx]={...r[rIdx],[key]:val};n[tagIdx]={...n[tagIdx],restaurants:r};return n;});
+  const updateRest=(tagIdx,rIdx,key,val)=>setTage(p=>{const n=[...p];const r=[...n[tagIdx].restaurants];r[rIdx]={...r[rIdx],[key]:val};n[tagIdx]=dropTagMark({...n[tagIdx],restaurants:r},`restaurants[${rIdx}].${key}`);return n;});
   const addRest=(tagIdx)=>{
     const newIdx=(tage[tagIdx]?.restaurants?.length)||0;
     const pos=maxPosition(tage[tagIdx])+1;
@@ -2016,7 +2037,7 @@ function App(){
   };
 
   // AKTIVITÄT
-  const updateAkt=(tagIdx,aIdx,key,val)=>setTage(p=>{const n=[...p];const a=[...n[tagIdx].aktivitaeten];a[aIdx]={...a[aIdx],[key]:val};n[tagIdx]={...n[tagIdx],aktivitaeten:a};return n;});
+  const updateAkt=(tagIdx,aIdx,key,val)=>setTage(p=>{const n=[...p];const a=[...n[tagIdx].aktivitaeten];a[aIdx]={...a[aIdx],[key]:val};n[tagIdx]=dropTagMark({...n[tagIdx],aktivitaeten:a},`aktivitaeten[${aIdx}].${key}`);return n;});
   const addAkt=(tagIdx)=>{
     const newIdx=(tage[tagIdx]?.aktivitaeten?.length)||0;
     const pos=maxPosition(tage[tagIdx])+1;
@@ -2117,8 +2138,28 @@ function App(){
     return data.drive_link;
   },[apiBase,authHeaderName,authHeaderValue]);
 
+  // v0.26.1: Tag-Mapping params_json.tage[i] → Formularzustand; gemeinsam für Laden und Interview-Import.
+  // (Inhalt unverändert aus hydrateFromDraft v0.26.0 herausgelöst.)
+  const mapParamsTag=(t,i)=>ensurePositions({
+        tag_nummer:t.tag_nummer||i+1,
+        tag_typ:t.tag_typ||'',
+        tag_titel:t.tag_ort||t.tag_titel||'',
+        tag_start:t.tag_start||'',
+        tag_story:t.tag_story||t.tag_beschreibung||'',
+        tagesort:t.tagesort||'',
+        hotel_ref:t.hotel_ref||'A',
+        // v0.26.0 (L-WW-132): nur 'keine' explizit, alles andere = Vornacht (Bestand ohne Feld).
+        unterkunft_modus:t.unterkunft_modus==='keine'?'keine':'vornacht',
+        zimmer_tipp:t.zimmer_tipp||'',
+        stopps:Array.isArray(t.stopps)&&t.stopps.length?t.stopps:[{name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
+        restaurants:Array.isArray(t.restaurants)&&t.restaurants.length?t.restaurants:[{name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
+        aktivitaeten:Array.isArray(t.aktivitaeten)&&t.aktivitaeten.length?t.aktivitaeten:[{name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]
+      });
+
   // ============== HYDRATE FROM DRAFT ==============
   const hydrateFromDraft=useCallback((d)=>{
+    // v0.26.1: Interview-Import-Zustand gehört zum vorher offenen Entwurf → verwerfen.
+    setMarks({});setImportResult(null);setImportChecks({});
     setEntwurfId(d.entwurf_id);
     // v0.19.4 (B-2): geladener Entwurf existiert im Backend → alle folgenden Saves sind Updates.
     setDraftPersisted(true);
@@ -2184,21 +2225,7 @@ function App(){
       // Food, dann Aktivitäten — entspricht der heutigen Anzeige-Reihenfolge.
       // v0.19.2: tagesort (S-1) additiv durchreichen; ort_profil (S-2) im Stopp-Stub. Beide
       // Felder sind additiv — bestehende Stopps ohne ort_profil bleiben unverändert (Bestandsschutz).
-      const mappedTage=params.tage.map((t,i)=>ensurePositions({
-        tag_nummer:t.tag_nummer||i+1,
-        tag_typ:t.tag_typ||'',
-        tag_titel:t.tag_ort||t.tag_titel||'',
-        tag_start:t.tag_start||'',
-        tag_story:t.tag_story||t.tag_beschreibung||'',
-        tagesort:t.tagesort||'',
-        hotel_ref:t.hotel_ref||'A',
-        // v0.26.0 (L-WW-132): nur 'keine' explizit, alles andere = Vornacht (Bestand ohne Feld).
-        unterkunft_modus:t.unterkunft_modus==='keine'?'keine':'vornacht',
-        zimmer_tipp:t.zimmer_tipp||'',
-        stopps:Array.isArray(t.stopps)&&t.stopps.length?t.stopps:[{name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
-        restaurants:Array.isArray(t.restaurants)&&t.restaurants.length?t.restaurants:[{name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
-        aktivitaeten:Array.isArray(t.aktivitaeten)&&t.aktivitaeten.length?t.aktivitaeten:[{name:'',anbieter:'',adresse:'',telefon:'',insider_tipps:''}]
-      }));
+      const mappedTage=params.tage.map(mapParamsTag);
       setTage(mappedTage);
       // v0.19.2 (Schönheit): erstes Sub-Item von Tag 1 des geladenen Entwurfs vorab aufklappen.
       const first0=getSortedSchedule(mappedTage[0])[0];
@@ -2696,6 +2723,377 @@ function App(){
     return 'Z';
   };
 
+  // ===================== v0.26.1/v0.26.2: WHISPERER-INTERVIEW (Brief e→b 2026-10-09, B1–B4) =====================
+  // Nur admin/curator_master (canManage). v0.26.2: Kontrakt c (Antworten c→b 2026-10-09, WF-INT v1.0):
+  // EIN Endpunkt POST <host>/webhook/ww-interview (Geschwister von reise-api-ww-v2, gleicher Header),
+  // Feld `action`: erzeugen | sperren | erneuern | status | lesen | importieren (letzteres A1-γ, noch nicht gebaut).
+  // `user_id` Pflicht; Rolle prüft der Server (Tab Users), `role` wird ignoriert (trotzdem mitgesendet).
+  // Fehler {ok:false, error|fehler, hinweis} mit 400/403/404/409/422. Antwort ohne ok:true = Fehler.
+  // Mock-Modus bleibt als Admin-Schalter (Standard aus) — für Import-Tests, bis A1-β/γ Inhalte liefern.
+  const ivBase=()=>apiBase.replace(/\/reise-api-ww-v2\/?$/,'')+'/ww-interview';
+  const[ivMock,setIvMock]=useState(()=>ls('interviewMock2','0')==='1');
+  useEffect(()=>{lsSet('interviewMock2',ivMock?'1':'0');},[ivMock]);
+  const[ivInfo,setIvInfo]=useState(null);        // Link-/Rundenstatus: {interview_id,status_runde1,token_status,token_gueltig_bis,whisperer_name,whisperer_email,modus}
+  const[ivForm,setIvForm]=useState({whisperer_name:'',whisperer_email:'',modus:'a'});
+  const[ivUrl,setIvUrl]=useState('');            // nur direkt nach erzeugen/erneuern; nie gespeichert
+  const[ivBusy,setIvBusy]=useState('');
+  const[ivMsg,setIvMsg]=useState(null);          // {kind:'ok'|'err'|'info',text}
+  const[ivRead,setIvRead]=useState(null);        // Lesefassung (A1-7)
+  const[ivLoadedFor,setIvLoadedFor]=useState('');
+  const[importResult,setImportResult]=useState(null);   // {kontrollpunkte,offene_punkte,warnungen,hinweise,interview_id}
+  const[importChecks,setImportChecks]=useState({});     // lokal abhakbar, keine Persistenz (A1)
+  const ivMockStore=useRef({});                   // Mock-Zustand je entwurf_id
+
+  // Fehler mit HTTP-Status, Code und Hinweis (c: error ab v1.1, heute fehler).
+  const ivErr=(r,status,what)=>{
+    const code=(r&&(r.error||r.fehler))||'';
+    const e=new Error((code||(what+': Antwort ohne ok-Feld (als Fehler gewertet)'))+(r&&r.hinweis?' — '+r.hinweis:'')+(status&&status!==200?' (HTTP '+status+')':''));
+    e.status=status||0;e.code=code;e.data=r||null;
+    return e;
+  };
+  const ivRequireOk=(r,what)=>{
+    if(!r||r.ok!==true) throw ivErr(r,0,what);
+    return r;
+  };
+  // Live-Aufruf WF-INT. Mock-Antworten laufen über ivRequireOk.
+  const ivFetch=async(action,payload)=>{
+    const headers={'Content-Type':'application/json'};
+    if(authHeaderName&&authHeaderValue) headers[authHeaderName]=authHeaderValue;
+    const res=await fetch(ivBase(),{method:'POST',headers,body:JSON.stringify({action,user_id:currentUserId,role,...payload})});
+    const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch{}
+    if(!data) throw ivErr(null,res.status,'HTTP '+res.status+': '+(txt.substring(0,150)||'leere Antwort'));
+    if(data.ok!==true) throw ivErr(data,res.status,action);
+    return data;
+  };
+  const ivPickInfo=r=>({
+    interview_id:r.interview_id||'',
+    entwurf_id:r.entwurf_id||'',
+    status_runde1:r.status_runde1||'',
+    token_status:r.token_status||'',
+    token_gueltig_bis:r.token_gueltig_bis||'',
+    whisperer_name:r.whisperer_name||'',
+    whisperer_email:r.whisperer_email||'',
+    modus:r.modus||''
+  });
+
+  // ---------- Mock (nur bis c-Endpunkte stehen) ----------
+  const ivMockLink=(aktion,body)=>{
+    const st=ivMockStore.current[entwurfId]||null;
+    const plus60=()=>new Date(Date.now()+60*864e5).toISOString().slice(0,10);
+    const fakeUrl=()=>'https://whisperedways.com/whisperer-gespraech/?t=MOCK-'+Math.random().toString(36).slice(2,10);
+    if(aktion==='status'){
+      if(!st) return {ok:false,error:'nicht_gefunden',_status:404};
+      return {ok:true,...st};
+    }
+    if(aktion==='erzeugen'){
+      if(st&&st.interview_id) return {ok:false,error:'interview_existiert',interview_id:st.interview_id};
+      const n={interview_id:'INT-MOCK-'+Date.now(),status_runde1:'offen',token_status:'aktiv',token_gueltig_bis:plus60(),whisperer_name:body.whisperer_name,whisperer_email:body.whisperer_email,modus:body.modus};
+      ivMockStore.current[entwurfId]=n;
+      return {ok:true,...n,url:fakeUrl()};
+    }
+    if(!st) return {ok:false,error:'Kein Link vorhanden.'};
+    if(aktion==='sperren'){const n={...st,token_status:'gesperrt'};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
+    if(aktion==='erneuern'){
+      if(st.token_status==='gesperrt'&&!body.neues_token) return {ok:false,error:'token_gesperrt',hinweis:'Gesperrter Link nur mit neuem Token nutzbar.'};
+      const n={...st,token_status:'aktiv',token_gueltig_bis:plus60()};ivMockStore.current[entwurfId]=n;
+      return body.neues_token?{ok:true,...n,url:fakeUrl()}:{ok:true,...n};
+    }
+    if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
+    return {ok:false,error:'Unbekannte Aktion'};
+  };
+  const ivMockLesen=()=>{
+    const st=ivMockStore.current[entwurfId];
+    if(!st||!['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:true,status_runde1:st?st.status_runde1:'',ergebnis_text:'',offene_punkte:'',stimmung:'',herkunft:'',material:[],zeitstempel:{}};
+    return {ok:true,status_runde1:st.status_runde1,
+      ergebnis_text:'TEIL 1 — Gesamtreise\n[Mock] Lesefassung des freigegebenen Interviews. Hier erscheint der Text, wie der Whisperer ihn freigegeben hat.\n\nTEIL 2 — Tag 1\n[Mock] Ankunft, erster Spaziergang …',
+      offene_punkte:'- [Mock] Name des Restaurants an Tag 2 unklar\n- [Mock] Öffnungszeiten Markt prüfen',
+      stimmung:'[Mock] Ruhig, persönlich, viel Begegnung mit Gastgebern.',
+      herkunft:st.modus==='b'?'[Mock] Teile aus hochgeladenem Reisetagebuch (notizen.docx).':'',
+      material:st.modus==='b'?[{dateiname:'notizen.docx',typ:'docx'},{dateiname:'route.pdf',typ:'pdf'}]:[],
+      zeitstempel:{created_at:'2026-10-09T09:00:00Z',abgeschlossen_at:'2026-10-09T11:30:00Z',importiert_at:st.status_runde1==='importiert'?new Date().toISOString():''}};
+  };
+  const ivMockImport=()=>{
+    const st=ivMockStore.current[entwurfId];
+    if(!st||!['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:false,error:'Runde 1 ist nicht abgeschlossen.'};
+    ivMockStore.current[entwurfId]={...st,status_runde1:'importiert'};
+    const n=Math.max(tage.length,3);
+    const tg=[];
+    for(let i=0;i<n;i++){
+      const typ=i===0?'anreisetag':(i===n-1?'abreisetag':'normaltag');
+      tg.push({tag_nummer:String(i+1),tag_typ:typ,tag_ort:'[Mock] Tag '+(i+1),tag_beschreibung:'[Mock] Story zu Tag '+(i+1),tag_story:'[Mock] Story zu Tag '+(i+1),tagesort:'',hotel_ref:'A',tag_start:'',zimmer_tipp:'',
+        stopps:[{position:1,name:'[Mock] Stopp '+(i+1),adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'[Mock] Tipp',ort_profil:false}],
+        restaurants:[{position:2,name:'[Mock] Restaurant '+(i+1),mahlzeit:'Abendessen',charakter:'',preis:'',adresse:'',telefon:'',warum:'[Mock] Warum-Satz'}],aktivitaeten:[]});
+    }
+    return {ok:true,interview_id:st.interview_id,entwurf_id:entwurfId,
+      felder:{anzahl_tage:n,params_json:{reise_ort:trip.reise_ort||'[Mock] Testreise',anzahl_tage:n,tage:tg},mit_kindern:false,
+        taxonomien_patch:{reise_art:trip.reise_format||'',erlebnistyp:trip.reise_thema||[],zielgruppe:trip.zielgruppe||[]},
+        reise_charakter:trip.reise_charakter||'',empfohlene_monate_json:{mai:1,okt:1,aug:3},mietwagen:'empfohlen',flughafen_empfehlung:'[Mock] Flughafen A (1 h)',
+        hotels_pool_json:[{ref:'A',hotel_id:'',name:'[Mock] Gästehaus Beispiel',kategorie:'',adresse:'',telefon:'',tipps:'[Mock] Zimmer zum Hof',naechte:'Tag 1-'+(n-1),wp_url:''}],
+        freitext_gesamtreise:'[Mock] Insider-Wissen zur Gesamtreise aus dem Interview.',aktivitaets_level:'moderat',zielgruppe:trip.zielgruppe||[],anreise:['Flug']},
+      vorschlaege:{match_dimensions_json:{pace:2,comfort:4,authenticity:4},emo_tonalitaet:2,emo_international:false,emo_persoenlichkeitsfit:['genießer'],trust_signale:[]},
+      markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'}],
+      kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen'],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
+  };
+
+  // ---------- B1: Link ----------
+  // Mock-Antwort in denselben Fehlerweg wie live bringen (404 → status).
+  const ivRun=async(action,payload)=>{
+    if(!ivMock) return ivFetch(action,payload);
+    const r=action==='lesen'?ivMockLesen():action==='importieren'?ivMockImport():ivMockLink(action,payload);
+    if(!r||r.ok!==true) throw ivErr(r,r&&r._status||409,action);
+    return r;
+  };
+  const ivLinkAction=async(aktion,extra={})=>{
+    if(!canManage) return;
+    if(!entwurfId||!draftPersisted){setIvMsg({kind:'err',text:'Bitte den Entwurf zuerst speichern.'});return;}
+    const iid=(ivInfo&&ivInfo.interview_id)||'';
+    if(aktion==='erzeugen'){
+      if(!ivForm.whisperer_name.trim()||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ivForm.whisperer_email.trim())){setIvMsg({kind:'err',text:'Name und gültige E-Mail des Whisperers angeben.'});return;}
+    }
+    if((aktion==='sperren'||aktion==='erneuern')&&!iid){setIvMsg({kind:'err',text:'Kein Interview zu diesem Entwurf.'});return;}
+    if(aktion==='sperren'&&!confirm('Link sofort sperren? Der Whisperer kann den Chat dann nicht mehr öffnen.')) return;
+    if(aktion==='erneuern'&&extra.neues_token&&!confirm('Neuen Link erzeugen? Die bisherige URL ist danach sofort ungültig.')) return;
+    setIvBusy(aktion);setIvMsg(null);
+    if(aktion!=='status') setIvUrl('');
+    try{
+      let body;
+      if(aktion==='erzeugen') body={entwurf_id:entwurfId,whisperer_name:ivForm.whisperer_name.trim(),whisperer_email:ivForm.whisperer_email.trim(),modus:ivForm.modus};
+      else if(aktion==='status') body={entwurf_id:entwurfId};
+      else if(aktion==='mock_status') body={...extra};
+      else body={interview_id:iid,...(extra.neues_token?{neues_token:true}:{})};
+      const r=await ivRun(aktion,body);
+      setIvInfo(ivPickInfo(r));
+      if(r.url&&(aktion==='erzeugen'||aktion==='erneuern')) setIvUrl(r.url);
+      if(aktion==='erzeugen') setIvMsg({kind:'ok',text:'Link erzeugt. Die URL wird nur jetzt angezeigt — bitte kopieren.'});
+      else if(aktion==='erneuern') setIvMsg({kind:'ok',text:extra.neues_token?'Neuer Link erzeugt — die bisherige URL ist ungültig. Neue URL nur jetzt sichtbar.':'Laufzeit verlängert. Die bisherige URL bleibt gültig.'});
+      else if(aktion==='sperren') setIvMsg({kind:'ok',text:'Link gesperrt.'});
+    }catch(e){
+      if(aktion==='status'&&(e.status===404||e.code==='nicht_gefunden')){setIvInfo(null);}
+      else if(aktion==='erzeugen'&&e.code==='interview_existiert'){
+        setIvMsg({kind:'info',text:'Zu diesem Entwurf existiert bereits ein Interview'+(e.data&&e.data.interview_id?' ('+e.data.interview_id+')':'')+'. Status wird geladen.'});
+        try{const s2=await ivRun('status',{entwurf_id:entwurfId});setIvInfo(ivPickInfo(s2));}catch{}
+      }
+      else if(e.code==='token_gesperrt') setIvMsg({kind:'err',text:'Link ist gesperrt — nur „Neuen Link erzeugen“ macht ihn wieder nutzbar.'});
+      else setIvMsg({kind:'err',text:e.message});
+    }
+    setIvBusy('');
+  };
+  // ---------- B3: Lesefassung ----------
+  const ivLoadRead=async()=>{
+    if(!entwurfId||!draftPersisted) return;
+    setIvBusy(b=>b||'lesen');
+    try{ setIvRead(await ivRun('lesen',{entwurf_id:entwurfId})); }
+    catch(e){ setIvRead((e.status===404||e.code==='nicht_gefunden')?{}:{error:e.message}); }
+    setIvBusy(b=>b==='lesen'?'':b);
+  };
+  // Beim Öffnen des Tabs einmal je Entwurf: Status + Lesefassung.
+  useEffect(()=>{
+    if(tab!=='interview'||!canManage||!entwurfId||!draftPersisted) return;
+    const key=entwurfId+'|'+(ivMock?'m':'l');
+    if(ivLoadedFor===key) return;
+    setIvLoadedFor(key);setIvInfo(null);setIvRead(null);setIvUrl('');setIvMsg(null);
+    (async()=>{await ivLinkAction('status');await ivLoadRead();})();
+  // eslint-disable-next-line
+  },[tab,canManage,entwurfId,draftPersisted,ivMock]);
+
+  // ---------- B2: Import „Aus Interview übernehmen“ ----------
+  // Pfad aus S2 (markierung[].pfad) → Formular-Key. Tage: 'params_json.tage[i].<rest>' → {tag:i,key}.
+  const IV_TOP_MAP={match_dimensions_json:'match',empfohlene_monate_json:'empfohlene_monate',hotels_pool_json:'hotels','taxonomien_patch.reise_art':'reise_format','taxonomien_patch.erlebnistyp':'reise_thema','taxonomien_patch.zielgruppe':'zielgruppe'};
+  const IV_TAG_MAP={tag_ort:'tag_titel',tag_beschreibung:'tag_story',tag_unterkunft:'hotel_ref'};
+  const ivMapPfad=(pfad)=>{
+    let p=String(pfad||'').trim();
+    if(p.startsWith('felder.')) p=p.slice(7);
+    if(p.startsWith('vorschlaege.')) p=p.slice(12);
+    const mt=p.match(/^params_json\.tage\[(\d+)\]\.?(.*)$/);
+    if(mt){
+      let rest=mt[2]||'*';
+      const head=rest.split(/[.[]/)[0];
+      if(IV_TAG_MAP[head]) rest=IV_TAG_MAP[head]+rest.slice(head.length);
+      return {tag:Number(mt[1]),key:rest};
+    }
+    if(p.startsWith('params_json.')) p=p.slice(12);
+    for(const k of Object.keys(IV_TOP_MAP)){ if(p===k||p.startsWith(k+'.')) return {key:IV_TOP_MAP[k]+p.slice(k.length)}; }
+    return {key:p};
+  };
+  const IV_LABEL={reise_ort:'Titel / Destination',tage:'Tagesplanung',reise_format:'Reise-Format',reise_thema:'Reise-Thema',zielgruppe:'Zielgruppe',reise_charakter:'Reise-Art',empfohlene_monate:'Empfohlene Reisemonate',mietwagen:'Mietwagen',flughafen_empfehlung:'Empfohlene Flughäfen',hotels:'Hotels',freitext_gesamtreise:'Insider-Wissen zur Gesamtreise',aktivitaets_level:'Aktivitäts-Level',anreise:'Anreise',persoenliche_erfahrung:'Persönliche Erfahrung',magic_moment:'Magic Moment',sicherheitshinweise:'Sicherheitshinweise',match:'Stil-Faktoren',emo_tonalitaet:'Tonalität',emo_international:'International',emo_persoenlichkeitsfit:'Eignet sich besonders für',trust_signale:'Beratungsgespräch'};
+  const ivLabelFor=k=>{
+    const [h,sub]=k.split('.');
+    return (IV_LABEL[h]||h)+(sub?' · '+sub:'');
+  };
+  const ivIsFilled=v=>{
+    if(v===null||v===undefined) return false;
+    if(Array.isArray(v)) return v.length>0;
+    if(typeof v==='object') return Object.keys(v).length>0;
+    if(typeof v==='string') return v.trim()!=='';
+    return true;
+  };
+  const ivTagHasContent=t=>!!((t.tag_titel||'').trim()||(t.tag_story||'').trim()||(t.tag_typ||'').trim()||(t.stopps||[]).some(s=>s&&(s.name||'').trim())||(t.restaurants||[]).some(r=>r&&(r.name||'').trim())||(t.aktivitaeten||[]).some(a=>a&&(a.name||'').trim()));
+  // Baut aus der S2-Antwort den Patch (ohne ihn anzuwenden) + Liste betroffener, bereits befüllter Felder.
+  const ivBuildPatch=(r)=>{
+    const f=r.felder||{}, v=r.vorschlaege||{};
+    const has=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
+    const pj=v2=>{if(typeof v2==='string'){try{return JSON.parse(v2);}catch{return null;}}return v2;};
+    const patch={};const hinweise=[];
+    const params=has(f,'params_json')?(pj(f.params_json)||{}):null;
+    if(params&&params.reise_ort!==undefined) patch.reise_ort=params.reise_ort||'';
+    const tp=pj(f.taxonomien_patch)||{};
+    const pick=(direct,tpKey,formKey,arr)=>{
+      const norm=x=>arr?(Array.isArray(x)?x:(x?[x]:[])):(x||'');
+      if(has(f,direct)){
+        patch[formKey]=norm(f[direct]);
+        if(has(tp,tpKey)&&JSON.stringify(norm(tp[tpKey]))!==JSON.stringify(patch[formKey])) hinweise.push(`${ivLabelFor(formKey)}: felder.${direct} und taxonomien_patch.${tpKey} widersprechen sich — felder.${direct} übernommen [UNSICHER].`);
+      }else if(has(tp,tpKey)) patch[formKey]=norm(tp[tpKey]);
+    };
+    pick('reise_format','reise_art','reise_format',false);
+    pick('reise_thema','erlebnistyp','reise_thema',true);
+    pick('zielgruppe','zielgruppe','zielgruppe',true);
+    if(patch.reise_thema) patch.reise_thema=patch.reise_thema.slice(0,3);
+    ['reise_charakter','mietwagen','flughafen_empfehlung','freitext_gesamtreise','aktivitaets_level','persoenliche_erfahrung','magic_moment','sicherheitshinweise'].forEach(k=>{if(has(f,k)) patch[k]=f[k]==null?'':String(f[k]);});
+    if(has(f,'anreise')) patch.anreise=Array.isArray(f.anreise)?f.anreise:(f.anreise?[f.anreise]:[]);
+    if(has(f,'empfohlene_monate_json')) patch.empfohlene_monate=pj(f.empfohlene_monate_json)||{};
+    if(has(f,'hotels_pool_json')){
+      const hp=pj(f.hotels_pool_json);
+      const used=new Set();
+      patch.hotels=(Array.isArray(hp)?hp:[]).map((h,i)=>{
+        let ref=(h&&h.ref)||'';
+        if(!ref||used.has(ref)){for(let c=65;c<=90;c++){const x=String.fromCharCode(c);if(!used.has(x)){ref=x;break;}}}
+        used.add(ref);
+        // c A1-6: hotel_id/kategorie/adresse/telefon/wp_url leer — Bindung erfolgt durch „Hotel suchen“.
+        return {ref,hotel_id:'',name:(h&&h.name)||'',kategorie:'',adresse:'',telefon:'',tipps:(h&&h.tipps)||'',naechte:(h&&h.naechte)||'',wp_url:''};
+      });
+      if(!patch.hotels.length) patch.hotels=[{ref:'A',hotel_id:'',name:'',kategorie:'',adresse:'',telefon:'',tipps:'',naechte:'',wp_url:''}];
+    }
+    if(has(f,'mit_kindern')) hinweise.push('mit_kindern: kein Formularfeld — Speichern sendet weiterhin false (Wert aus Interview: '+String(f.mit_kindern)+') [UNSICHER].');
+    // Vorschläge (immer markiert)
+    const vMarks={};
+    const mdj=has(v,'match_dimensions_json')?pj(v.match_dimensions_json):null;
+    if(mdj&&typeof mdj==='object'){patch.match={...trip.match};Object.keys(mdj).forEach(k=>{const n=Number(mdj[k]);if(n>=1&&n<=5){patch.match[k]=n;vMarks['match.'+k]=true;}else hinweise.push(`Stil-Faktor ${k}: ungültiger Wert ${JSON.stringify(mdj[k])} ignoriert.`);});}
+    if(has(v,'emo_tonalitaet')){const n=Number(v.emo_tonalitaet);if(n>=1&&n<=5){patch.emo_tonalitaet=n;vMarks.emo_tonalitaet=true;}else hinweise.push('Tonalität: ungültiger Wert ignoriert.');}
+    if(has(v,'emo_international')){patch.emo_international=v.emo_international===true||v.emo_international==='true'||v.emo_international===1;vMarks.emo_international=true;}
+    if(has(v,'emo_persoenlichkeitsfit')){const a=Array.isArray(v.emo_persoenlichkeitsfit)?v.emo_persoenlichkeitsfit:[];const ok=VOC_PERSOENLICHKEITSFIT.map(o=>o.value);const bad=a.filter(x=>!ok.includes(x));if(bad.length)hinweise.push('Eignet sich besonders für: unbekannte Werte ignoriert ('+bad.join(', ')+').');patch.emo_persoenlichkeitsfit=a.filter(x=>ok.includes(x)).slice(0,3);vMarks.emo_persoenlichkeitsfit=true;}
+    if(has(v,'trust_signale')){const t=v.trust_signale;patch.trust_signale=Array.isArray(t)?t.filter(x=>x==='beratung_moeglich'):(t===true?['beratung_moeglich']:[]);vMarks.trust_signale=true;}
+    // Tage
+    let newTage=null;
+    if(params&&Array.isArray(params.tage)){
+      newTage=params.tage.map(mapParamsTag);
+      const soll=Number(f.anzahl_tage||params.anzahl_tage||0);
+      if(soll&&soll!==newTage.length) hinweise.push(`anzahl_tage (${soll}) ≠ Anzahl Tage in params_json (${newTage.length}) — Tage wie geliefert übernommen.`);
+    }
+    // betroffene, bereits befüllte Felder (für den Bestätigungsdialog)
+    const betroffen=[];
+    Object.keys(patch).forEach(k=>{
+      if(k==='match'){ if(Object.keys(vMarks).some(x=>x.startsWith('match.'))) betroffen.push(ivLabelFor('match')); return; }
+      if(k==='hotels'){ if(trip.hotels.some(h=>h.name||h.hotel_id)) betroffen.push(ivLabelFor('hotels')); return; }
+      if(k==='emo_tonalitaet'||k==='emo_international') { betroffen.push(ivLabelFor(k)); return; }
+      if(ivIsFilled(trip[k])) betroffen.push(ivLabelFor(k));
+    });
+    if(newTage&&tage.some(ivTagHasContent)) betroffen.push(ivLabelFor('tage')+' (alle Tage)');
+    return {patch,newTage,vMarks,hinweise,betroffen};
+  };
+  const ivApply=(r,built)=>{
+    const {patch,newTage,vMarks,hinweise}=built;
+    const topMarks={};const tagMarks={};const ohneAnzeige=[];
+    Object.keys(vMarks).forEach(k=>{topMarks[k]='Vorschlag aus Interview';});
+    (Array.isArray(r.markierung)?r.markierung:[]).forEach(m=>{
+      if(!m||!m.pfad) return;
+      const mp=ivMapPfad(m.pfad);const g=m.grund||'Vorschlag aus Interview';
+      if(mp.tag!==undefined){
+        if(!newTage||mp.tag<0||mp.tag>=newTage.length){ohneAnzeige.push(m.pfad+' — '+g);return;}
+        (tagMarks[mp.tag]=tagMarks[mp.tag]||{})[mp.key]=g;
+      }else{
+        // Grund an vorhandene Vorschlags-Markierung hängen, sonst eigene Markierung
+        const hit=Object.keys(topMarks).filter(k=>k===mp.key||k.startsWith(mp.key+'.'));
+        if(hit.length) hit.forEach(k=>{topMarks[k]=g;}); else topMarks[mp.key]=g;
+      }
+    });
+    setTrip(p=>({...p,...patch}));
+    if(newTage){
+      const withMarks=newTage.map((t,i)=>tagMarks[i]?{...t,_marks:tagMarks[i]}:t);
+      setTage(withMarks);
+      const first0=getSortedSchedule(withMarks[0])[0];
+      setOpenItem(first0?{0:{type:first0.type,idx:first0.idx}}:{});
+      setOpenTags(o=>{const n={...o};Object.keys(tagMarks).forEach(i=>{n[i]=true;});return n;});
+    }
+    setMarks(topMarks);
+    setImportResult({
+      interview_id:r.interview_id||'',
+      kontrollpunkte:Array.isArray(r.kontrollpunkte)?r.kontrollpunkte:[],
+      offene_punkte:Array.isArray(r.offene_punkte)?r.offene_punkte:[],
+      warnungen:Array.isArray(r.warnungen)?r.warnungen:[],
+      hinweise:[...hinweise,...ohneAnzeige.map(x=>'Markierung ohne Feldanzeige: '+x)],
+      at:new Date().toISOString()
+    });
+    setImportChecks({});
+    // Abschnitte mit Markierungen aufklappen
+    const sec={reise_ort:'basis',anreise:'basis',empfohlene_monate:'basis',mietwagen:'logistik',flughafen_empfehlung:'logistik',hotels:'logistik',freitext_gesamtreise:'logistik',reise_format:'taxonomie',reise_thema:'taxonomie',reise_charakter:'taxonomie',zielgruppe:'taxonomie',aktivitaets_level:'taxonomie',match:'match',trust_signale:'match',emo_tonalitaet:'match',emo_international:'match',emo_persoenlichkeitsfit:'match',persoenliche_erfahrung:'persoenlich',magic_moment:'persoenlich',sicherheitshinweise:'persoenlich'};
+    setOpenSections(o=>{const n={...o};Object.keys(topMarks).forEach(k=>{const s2=sec[k.split('.')[0]];if(s2)n[s2]=true;});return n;});
+  };
+  const handleImport=async()=>{
+    if(!canManage) return;
+    if(!entwurfId||!draftPersisted){setIvMsg({kind:'err',text:'Bitte den Entwurf zuerst speichern.'});return;}
+    if(!isEditableStatus(tripStatus)&&!correctionMode){setIvMsg({kind:'err',text:'Entwurf ist nicht editierbar (Status '+(STATUS_LABELS[tripStatus]||tripStatus)+').'});return;}
+    setIvBusy('import');setIvMsg(null);
+    try{
+      const r=await ivRun('importieren',{entwurf_id:entwurfId});
+      if(r.entwurf_id&&r.entwurf_id!==entwurfId) throw new Error('Import-Antwort gehört zu einem anderen Entwurf ('+r.entwurf_id+').');
+      const built=ivBuildPatch(r);
+      if(built.betroffen.length&&!confirm('Formular wird mit den Interview-Daten überschrieben.\n\nBetrifft: '+built.betroffen.join(', ')+'\n\nAndere Felder bleiben unverändert. Gespeichert wird erst mit „💾 Speichern“.')){
+        setIvMsg({kind:'info',text:'Import abgebrochen — Formular unverändert.'});
+      }else{
+        ivApply(r,built);
+        setIvMsg({kind:'ok',text:'Interview-Daten ins Formular übernommen (noch nicht gespeichert). Markierte Felder prüfen, dann „💾 Speichern“.'});
+      }
+      // Status nachladen (c setzt importiert)
+      try{const s2=await ivRun('status',{entwurf_id:entwurfId});setIvInfo(ivPickInfo(s2));}catch{}
+    }catch(e){setIvMsg({kind:'err',text:'Import fehlgeschlagen: '+e.message});}
+    setIvBusy('');
+  };
+  // Markierungen: Zugriff, Bestätigen, Zählen
+  const mk=(key)=>marks[key]?{grund:marks[key],onOk:()=>setMarks(m=>{const n={...m};delete n[key];return n;})}:null;
+  const mkMatch=(k)=>mk('match.'+k)||mk('match');
+  const mkTag=(ti,key)=>{const t=tage[ti];const g=t&&t._marks&&t._marks[key];return g?{grund:g,onOk:()=>setTage(p=>{const n=[...p];const m={...(n[ti]._marks||{})};delete m[key];n[ti]={...n[ti],_marks:m};return n;})}:null;};
+  const TAG_FIELD_KEYS=['tag_typ','tag_titel','tagesort','tag_start','hotel_ref','tag_story'];
+  const tagDeepMarks=(t)=>Object.keys((t&&t._marks)||{}).filter(k=>!TAG_FIELD_KEYS.includes(k)).map(k=>({key:k,grund:t._marks[k]}));
+  const clearTagMarks=(ti)=>setTage(p=>{const n=[...p];n[ti]={...n[ti],_marks:{}};return n;});
+  const openMarkCount=Object.keys(marks).length+tage.reduce((s2,t)=>s2+Object.keys((t&&t._marks)||{}).length,0);
+
+  // v0.26.1 (B2.5): Panel mit Kontrollpunkten/offenen Punkten/Warnungen — über Reise-Eingabe und Tagesplanung.
+  // Abhaken nur lokal (keine Persistenz in A1).
+  const renderImportPanel=()=>{
+    if(!canManage||!importResult) return null;
+    const grp=(title,arr,keyP,color)=>arr.length?<div style={{marginBottom:8}}>
+      <div style={{fontSize:12,fontWeight:700,color,marginBottom:4}}>{title} ({arr.length})</div>
+      {arr.map((x,i)=>{const k=keyP+i;const txt=typeof x==='string'?x:JSON.stringify(x);return <label key={k} style={{display:'flex',gap:8,alignItems:'flex-start',fontSize:12,padding:'2px 0',cursor:'pointer',textDecoration:importChecks[k]?'line-through':'none',color:importChecks[k]?'#999':'var(--anthrazit)'}}>
+        <input type="checkbox" checked={!!importChecks[k]} onChange={e=>setImportChecks(c=>({...c,[k]:e.target.checked}))} style={{marginTop:2}}/>
+        <span>{txt}</span></label>;})}
+    </div>:null;
+    const topOpen=Object.keys(marks);
+    return <div style={{background:'#FFF7F3',border:'1px solid var(--coral)',borderRadius:8,padding:'12px 14px',marginBottom:16}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+        <strong style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:14,color:'#8A3A24'}}>🎙️ Aus Interview übernommen — noch nicht gespeichert, bis „💾 Speichern“</strong>
+        <span style={{fontSize:11,color:'#8A3A24',background:'var(--coral-light)',borderRadius:4,padding:'1px 6px',fontWeight:700}}>{openMarkCount} offene Vorschläge</span>
+        <button type="button" onClick={()=>setImportResult(null)} title="Panel ausblenden (Markierungen bleiben)" style={{marginLeft:'auto',background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>✕</button>
+      </div>
+      {grp('Kontrollpunkte',importResult.kontrollpunkte,'k','var(--sage-dark)')}
+      {grp('Offene Punkte',importResult.offene_punkte,'o','#8A6D00')}
+      {grp('Warnungen',importResult.warnungen,'w','var(--red)')}
+      {importResult.hinweise.length>0&&<div style={{fontSize:11,color:'#777',marginTop:6}}><strong>Hinweise Curator:</strong><ul style={{margin:'2px 0 0 18px'}}>{importResult.hinweise.map((h,i)=><li key={i}>{h}</li>)}</ul></div>}
+      {topOpen.length>0&&<div style={{fontSize:11,color:'#777',marginTop:6}}><strong>Offen (Reise-Eingabe):</strong> {topOpen.map(k=>ivLabelFor(k)).join(' · ')}</div>}
+    </div>;
+  };
+  const renderTagDeepMarks=(ti)=>{
+    const deep=tagDeepMarks(tage[ti]);
+    if(!deep.length) return null;
+    return <div style={{background:'#FFF7F3',border:'1px dashed var(--coral)',borderRadius:6,padding:'8px 10px',margin:'8px 0 12px',fontSize:12}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+        <ImpMark mark={{grund:deep.map(d=>d.key+': '+d.grund).join(' | ')}}/>
+        <span style={{color:'#8A3A24',fontWeight:600}}>{deep.length} Vorschläge im Tagesablauf</span>
+        <button type="button" onClick={()=>clearTagMarks(ti)} style={{marginLeft:'auto',border:'1px solid var(--sage)',background:'var(--white)',color:'var(--sage-dark)',borderRadius:4,fontSize:11,padding:'2px 8px',cursor:'pointer'}}>✓ alle dieses Tages bestätigen</button>
+      </div>
+      <ul style={{margin:'0 0 0 18px',color:'var(--anthrazit)'}}>{deep.map(d=><li key={d.key}><code style={{fontSize:11}}>{d.key}</code> — {d.grund}</li>)}</ul>
+    </div>;
+  };
+
   // ============== BUILD PAYLOAD ==============
   const buildPayload=()=>{
     const params={
@@ -2825,7 +3223,8 @@ function App(){
       else{
         setSaveStatus('success');
         setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
-        setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId);
+        // v0.26.1 (B2.4): offene Interview-Markierungen nur als Hinweis zählen (keine Sperre).
+        setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId+(openMarkCount>0?` — Hinweis: ${openMarkCount} Vorschläge aus Interview noch nicht bestätigt`:''));
         // URL aktualisieren für Refresh-Sicherheit
         const newUrl=window.location.pathname+'?entwurf_id='+encodeURIComponent(entwurfId);
         window.history.replaceState(null,'',newUrl);
@@ -3338,7 +3737,7 @@ function App(){
   // weil das Admin-Config-Panel einen "Modus: JSON-Vorschau"-Schalter hat, der den
   // Save-Handler in den JSON-Vorschau-Modus zwingt. Dieser Pfad ist Admin-only und
   // verlässt die Vorschau über den "← Zurück zum Formular"-Button im JSON-View.
-  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'},...(canManage?[{id:'bilder',label:'Bilder',icon:'🖼️'},{id:'admin',label:'Admin',icon:'⚙️'}]:[])];
+  const tabs=[{id:'whisperer',label:'Whisperer-Profil',icon:'👤'},{id:'trip',label:'Reise-Eingabe',icon:'✈️'},{id:'tage',label:'Tagesplanung',icon:'📅'},...(canManage?[{id:'interview',label:'Interview',icon:'🎙️'},{id:'bilder',label:'Bilder',icon:'🖼️'},{id:'admin',label:'Admin',icon:'⚙️'}]:[])];
 
   // Render-Gate: ohne eingeloggten User wird der Login-Screen gezeigt, App-UI bleibt verborgen.
   if(!currentUser){
@@ -3365,7 +3764,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.0 (L-WW-132 · Abreisetag Vornacht)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.2 (Aufgabe 55 · Interview WF-INT)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -3679,6 +4078,7 @@ function App(){
 
       {/* TRIP TAB */}
       {!showJson&&tab==='trip'&&<>
+        {renderImportPanel()}
         {/* v0.12: Status-Hinweisbanner. Erscheint, sobald der Status nicht mehr 'entwurf' ist. */}
         {!isEditableStatus(tripStatus)&&!correctionMode&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <span style={{fontSize:18}}>🔒</span>
@@ -3713,24 +4113,24 @@ function App(){
             innerhalb des Trip-Tabs nativ — keine Touches an den einzelnen Feldern nötig. */}
         <fieldset disabled={!isEditableStatus(tripStatus)&&!correctionMode} style={{border:'none',padding:0,margin:0,minWidth:0}}>
         <Section title="Basis-Informationen" icon="📌" open={openSections.basis} onToggle={()=>toggleSection('basis')}>
-          <Field label="Titel / Destination" badge="PFLICHT"><TI placeholder="z.B. Andalusien, Spanien" value={trip.reise_ort} onChange={v=>setT('reise_ort',v)}/></Field>
+          <Field label="Titel / Destination" badge="PFLICHT" mark={mk('reise_ort')}><TI placeholder="z.B. Andalusien, Spanien" value={trip.reise_ort} onChange={v=>setT('reise_ort',v)}/></Field>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
             <Field label="Region" badge="PFLICHT" half><Sel options={taxRegionSub} value={trip.region_sub} onChange={v=>setT('region_sub',v)}/></Field>
             <Field label="Land" badge="PFLICHT" half hint={trip.region_land?`Country-Code: ${getCountryCodeForLand()||'—'}`:''}><Sel options={taxRegionLand} value={trip.region_land} onChange={v=>setT('region_land',v)}/></Field>
           </div>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-            <Field label="Anreise" badge="EMPFOHLEN" half><MC options={['Flug','Pkw','Bahn','Schiff','Eigene']} value={trip.anreise} onChange={v=>setT('anreise',v)} columns={3}/></Field>
+            <Field label="Anreise" badge="EMPFOHLEN" half mark={mk('anreise')}><MC options={['Flug','Pkw','Bahn','Schiff','Eigene']} value={trip.anreise} onChange={v=>setT('anreise',v)} columns={3}/></Field>
           </div>
-          <Field label="Empfohlene Reisemonate" badge="PFLICHT" hint="1. Klick = Grün (Toll), 2. Klick = Gelb (OK), 3. Klick = Rot (Nicht empfohlen)"><MonthSel value={trip.empfohlene_monate} onChange={v=>setT('empfohlene_monate',v)}/></Field>
+          <Field label="Empfohlene Reisemonate" badge="PFLICHT" mark={mk('empfohlene_monate')} hint="1. Klick = Grün (Toll), 2. Klick = Gelb (OK), 3. Klick = Rot (Nicht empfohlen)"><MonthSel value={trip.empfohlene_monate} onChange={v=>setT('empfohlene_monate',v)}/></Field>
         </Section>
 
         <Section title="Logistik & Hotels" icon="🚗" open={openSections.logistik} onToggle={()=>toggleSection('logistik')}>
-          <Field label="Mietwagen" badge="EMPFOHLEN" hint="Tagesgenaue Empfehlung unter Tagesplanung eintragen."><Radio options={[{value:'unverzichtbar',label:'Unverzichtbar'},{value:'empfohlen',label:'Empfohlen'},{value:'teilweise',label:'Teilweise'},{value:'nicht_noetig',label:'Nicht nötig'},{value:'oepnv',label:'ÖPNV besser'}]} value={trip.mietwagen} onChange={v=>setT('mietwagen',v)} name="mietwagen"/></Field>
+          <Field label="Mietwagen" badge="EMPFOHLEN" mark={mk('mietwagen')} hint="Tagesgenaue Empfehlung unter Tagesplanung eintragen."><Radio options={[{value:'unverzichtbar',label:'Unverzichtbar'},{value:'empfohlen',label:'Empfohlen'},{value:'teilweise',label:'Teilweise'},{value:'nicht_noetig',label:'Nicht nötig'},{value:'oepnv',label:'ÖPNV besser'}]} value={trip.mietwagen} onChange={v=>setT('mietwagen',v)} name="mietwagen"/></Field>
           {trip.mietwagen&&<Field label="Mietwagen-Details" badge="OPTIONAL"><TI placeholder="Direkt am Flughafen, Automatik empfehlen..." value={trip.mietwagen_details} onChange={v=>setT('mietwagen_details',v)}/></Field>}
-          <Field label="Empfohlene Flughäfen" badge="EMPFOHLEN" hint="Wenn leer → KI wählt"><TA placeholder="z.B. Jerez (empfohlen, 45min) / Sevilla (1,5h) / Málaga (2,5h)" rows={2} value={trip.flughafen_empfehlung} onChange={v=>setT('flughafen_empfehlung',v)}/></Field>
+          <Field label="Empfohlene Flughäfen" badge="EMPFOHLEN" mark={mk('flughafen_empfehlung')} hint="Wenn leer → KI wählt"><TA placeholder="z.B. Jerez (empfohlen, 45min) / Sevilla (1,5h) / Málaga (2,5h)" rows={2} value={trip.flughafen_empfehlung} onChange={v=>setT('flughafen_empfehlung',v)}/></Field>
 
           {/* Hotel Pool mit Suche */}
-          <Field label="Hotels dieser Reise" badge="EMPFOHLEN" hint="Hotel-Name eintragen → 'Hotel suchen' → DB-Treffer wählen oder neu via Google anlegen.">
+          <Field label="Hotels dieser Reise" badge="EMPFOHLEN" mark={mk('hotels')} hint="Hotel-Name eintragen → 'Hotel suchen' → DB-Treffer wählen oder neu via Google anlegen.">
             {trip.hotels.map((hotel,hi)=><div key={hotel.ref} style={{background:'var(--beige-light)',borderRadius:8,padding:12,border:'1px solid #D0D0D0',marginBottom:10}}>
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
                 <span style={{background:hi===0?'var(--sage)':'var(--sage-light)',color:hi===0?'var(--white)':'var(--sage-dark)',borderRadius:'50%',width:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700}}>{hotel.ref}</span>
@@ -3762,7 +4162,7 @@ function App(){
             <div style={{textAlign:'center'}}><button onClick={()=>setT('hotels',[...trip.hotels,{ref:nextHotelRef(),hotel_id:'',name:'',kategorie:'',adresse:'',telefon:'',tipps:'',naechte:'',wp_url:''}])} style={{background:'none',border:'1px dashed var(--sage)',borderRadius:6,padding:'6px 20px',color:'var(--sage)',cursor:'pointer',fontSize:12}}>+ Hotel hinzufügen</button></div>
           </Field>
 
-          <InsiderField number={1} title="Dein Insider-Wissen zur Gesamtreise" hint="Anreise-Tipps, Straßenempfehlungen, Maut, regionale Besonderheiten (F1). Tagesgenaue Insidertips unter Tagesplanung eintragen." placeholder="AP-7 statt A-7, Siesta beachten, Abendessen nie vor 20h..." value={trip.freitext_gesamtreise} onChange={v=>setT('freitext_gesamtreise',v)}/>
+          <InsiderField number={1} title="Dein Insider-Wissen zur Gesamtreise" hint="Anreise-Tipps, Straßenempfehlungen, Maut, regionale Besonderheiten (F1). Tagesgenaue Insidertips unter Tagesplanung eintragen." placeholder="AP-7 statt A-7, Siesta beachten, Abendessen nie vor 20h..." value={trip.freitext_gesamtreise} onChange={v=>setT('freitext_gesamtreise',v)} mark={mk('freitext_gesamtreise')}/>
           {/* v0.18.0: Bildquelle pro Reise — ans Ende des Logistik-Blocks verschoben (unter „Insider-Wissen zur Gesamtreise"). Editierbar nur admin/curator_master; sonst read-only-Anzeige. */}
           <Field label="Bildquelle (Generierung)" badge={canManage?'ADMIN':'INFO'} hint={canManage?'Bestimmt die Bildquelle für die Generierung dieser Reise.':'Wird von Admin/Master gesetzt.'}>
             <Radio
@@ -3779,14 +4179,14 @@ function App(){
         </Section>
 
         <Section title="Taxonomie-Tags" icon="🏷️" open={openSections.taxonomie} onToggle={()=>toggleSection('taxonomie')}>
-          <Field label="Reise-Format" badge="PFLICHT" hint="WIE wird gereist?"><Radio options={taxReiseFormat} value={trip.reise_format} onChange={v=>setT('reise_format',v)} name="format"/></Field>
-          <Field label="Reise-Thema" badge="PFLICHT" hint="WAS? Bis zu 3 Themen — Reihenfolge zählt: erstes Thema = Hauptthema. Klarer Fokus führt zu besseren Treffern und höherer Auffindbarkeit."><OrderedTagPicker options={taxReiseThema} value={trip.reise_thema} onChange={v=>setT('reise_thema',v.slice(0,3))} max={3}/></Field>
-          <Field label="Reise-Art" badge="PFLICHT" hint="WARUM?"><Radio options={taxReiseArt} value={trip.reise_charakter} onChange={v=>setT('reise_charakter',v)} name="charakter"/></Field>
+          <Field label="Reise-Format" badge="PFLICHT" mark={mk('reise_format')} hint="WIE wird gereist?"><Radio options={taxReiseFormat} value={trip.reise_format} onChange={v=>setT('reise_format',v)} name="format"/></Field>
+          <Field label="Reise-Thema" badge="PFLICHT" mark={mk('reise_thema')} hint="WAS? Bis zu 3 Themen — Reihenfolge zählt: erstes Thema = Hauptthema. Klarer Fokus führt zu besseren Treffern und höherer Auffindbarkeit."><OrderedTagPicker options={taxReiseThema} value={trip.reise_thema} onChange={v=>setT('reise_thema',v.slice(0,3))} max={3}/></Field>
+          <Field label="Reise-Art" badge="PFLICHT" mark={mk('reise_charakter')} hint="WARUM?"><Radio options={taxReiseArt} value={trip.reise_charakter} onChange={v=>setT('reise_charakter',v)} name="charakter"/></Field>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-            <Field label="Zielgruppe" badge="PFLICHT" half><MC options={taxZielgruppe} value={trip.zielgruppe} onChange={v=>setT('zielgruppe',v)} columns={2}/></Field>
+            <Field label="Zielgruppe" badge="PFLICHT" half mark={mk('zielgruppe')}><MC options={taxZielgruppe} value={trip.zielgruppe} onChange={v=>setT('zielgruppe',v)} columns={2}/></Field>
             <Field label="Angebots-Stufe" badge="PFLICHT" half><MC options={taxTier} value={trip.tier} onChange={v=>setT('tier',v)} columns={1}/></Field>
           </div>
-          <Field label="Aktivitäts-Level" badge="PFLICHT"><Radio options={[{value:'leicht',label:'Leicht'},{value:'moderat',label:'Moderat'},{value:'anspruchsvoll',label:'Anspruchsvoll'}]} value={trip.aktivitaets_level} onChange={v=>setT('aktivitaets_level',v)} name="level"/></Field>
+          <Field label="Aktivitäts-Level" badge="PFLICHT" mark={mk('aktivitaets_level')}><Radio options={[{value:'leicht',label:'Leicht'},{value:'moderat',label:'Moderat'},{value:'anspruchsvoll',label:'Anspruchsvoll'}]} value={trip.aktivitaets_level} onChange={v=>setT('aktivitaets_level',v)} name="level"/></Field>
         </Section>
 
         <Section title="Stil-Faktoren der Reise" icon="🎯" open={openSections.match} onToggle={()=>toggleSection('match')}>
@@ -3796,18 +4196,18 @@ function App(){
                 Die Match-Dimensionen waren nie wirklich pflichtige Eingaben — sie haben Default-Wert 3 (Mitte),
                 d.h. der Curator konnte sie auch ohne bewusste Eingabe schon "ausfüllen". Das macht die alte
                 Pflicht-Markierung formal sinnlos. EMPFOHLEN ist die ehrlichere Markierung. */}
-            <Field label="Planungsintensität" badge="EMPFOHLEN" info="pre_curation"><Slider labels={['Offen','Grobgerüst','Tagesstruktur','Stunden-Plan','Minutiös']} value={trip.match.pre_curation} onChange={v=>setMatch('pre_curation',v)} dim="1"/></Field>
-            <Field label="Programmdichte" badge="EMPFOHLEN" info="pace"><Slider labels={['Sehr ruhig','Entspannt','Ausgewogen','Voll','Intensiv']} value={trip.match.pace} onChange={v=>setMatch('pace',v)} dim="2"/></Field>
-            <Field label="Allein vs. Gesellschaft" badge="EMPFOHLEN" info="solitude_social"><Slider labels={['Zurückgezogen','Privat','Mix','Sozial','Sehr gesellig']} value={trip.match.solitude_social} onChange={v=>setMatch('solitude_social',v)} dim="3"/></Field>
-            <Field label="Komfort-Niveau" badge="EMPFOHLEN" info="comfort"><Slider labels={['Einfach','Solide','Komfortabel','Premium','Luxus']} value={trip.match.comfort} onChange={v=>setMatch('comfort',v)} dim="4"/></Field>
-            <Field label="Kulturelle Tiefe" badge="EMPFOHLEN" info="cultural_depth"><Slider labels={['Keine','Touch-Points','Solide','Tief','Immersiv']} value={trip.match.cultural_depth} onChange={v=>setMatch('cultural_depth',v)} dim="5"/></Field>
+            <Field label="Planungsintensität" badge="EMPFOHLEN" info="pre_curation" mark={mkMatch('pre_curation')}><Slider labels={['Offen','Grobgerüst','Tagesstruktur','Stunden-Plan','Minutiös']} value={trip.match.pre_curation} onChange={v=>setMatch('pre_curation',v)} dim="1"/></Field>
+            <Field label="Programmdichte" badge="EMPFOHLEN" info="pace" mark={mkMatch('pace')}><Slider labels={['Sehr ruhig','Entspannt','Ausgewogen','Voll','Intensiv']} value={trip.match.pace} onChange={v=>setMatch('pace',v)} dim="2"/></Field>
+            <Field label="Allein vs. Gesellschaft" badge="EMPFOHLEN" info="solitude_social" mark={mkMatch('solitude_social')}><Slider labels={['Zurückgezogen','Privat','Mix','Sozial','Sehr gesellig']} value={trip.match.solitude_social} onChange={v=>setMatch('solitude_social',v)} dim="3"/></Field>
+            <Field label="Komfort-Niveau" badge="EMPFOHLEN" info="comfort" mark={mkMatch('comfort')}><Slider labels={['Einfach','Solide','Komfortabel','Premium','Luxus']} value={trip.match.comfort} onChange={v=>setMatch('comfort',v)} dim="4"/></Field>
+            <Field label="Kulturelle Tiefe" badge="EMPFOHLEN" info="cultural_depth" mark={mkMatch('cultural_depth')}><Slider labels={['Keine','Touch-Points','Solide','Tief','Immersiv']} value={trip.match.cultural_depth} onChange={v=>setMatch('cultural_depth',v)} dim="5"/></Field>
             {/* v0.14.1: "Kontemplativ" → "Entspannt" (Plan A3). Field-Label und Slider-Anker beide aktualisiert. */}
-            <Field label="Aktiv vs. Entspannt" badge="EMPFOHLEN" info="activity_mode"><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
-            <Field label="Insider-Tiefe" badge="EMPFOHLEN" info="authenticity"><Slider labels={['Klassisch','Bekannt','Geheimtipp-Mix','Off-the-path','Versteckt']} value={trip.match.authenticity} onChange={v=>setMatch('authenticity',v)} dim="7"/></Field>
+            <Field label="Aktiv vs. Entspannt" badge="EMPFOHLEN" info="activity_mode" mark={mkMatch('activity_mode')}><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
+            <Field label="Insider-Tiefe" badge="EMPFOHLEN" info="authenticity" mark={mkMatch('authenticity')}><Slider labels={['Klassisch','Bekannt','Geheimtipp-Mix','Off-the-path','Versteckt']} value={trip.match.authenticity} onChange={v=>setMatch('authenticity',v)} dim="7"/></Field>
             {/* v0.14.1: Trust-Signale-Mehrfachauswahl entfernt, ersetzt durch eine einzelne Checkbox.
                 Datenseitig bleibt das Array trust_signale erhalten (Backend-kompatibel) — es enthält
                 entweder ['beratung_moeglich'] oder []. So bleibt der WF1-Resource-Mapper unverändert. */}
-            <Field label="Individuelles Beratungsgespräch möglich" badge="EMPFOHLEN" info="trust_signale" hint="Wenn aktiviert, signalisiert das Reisenden, dass sie Fragen vorab persönlich klären können.">
+            <Field label="Individuelles Beratungsgespräch möglich" badge="EMPFOHLEN" info="trust_signale" mark={mk('trust_signale')} hint="Wenn aktiviert, signalisiert das Reisenden, dass sie Fragen vorab persönlich klären können.">
               <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'4px 0'}}>
                 <input
                   type="checkbox"
@@ -3826,11 +4226,11 @@ function App(){
               <div style={{fontSize:13,fontWeight:700,color:'var(--sage-dark)',marginBottom:4,fontFamily:"'Playfair Display',Georgia,serif"}}>💛 Emotionaler Charakter — von dir gepflegt</div>
               <div style={{fontSize:11,color:'#888',fontStyle:'italic',marginBottom:14}}>Diese Angaben kann die KI nicht aus deinen Texten ableiten — sie beschreiben die Atmosphäre, die du als Whisperer schaffst.</div>
 
-              <Field label="Tonalität der Begegnungen" badge="EMPFOHLEN" info="emo_tonalitaet" hint="Wie fühlen sich Gespräche und Begegnungen auf deiner Reise an?">
+              <Field label="Tonalität der Begegnungen" badge="EMPFOHLEN" info="emo_tonalitaet" mark={mk('emo_tonalitaet')} hint="Wie fühlen sich Gespräche und Begegnungen auf deiner Reise an?">
                 <Slider labels={TONALITAET_LABELS} value={trip.emo_tonalitaet} onChange={v=>setT('emo_tonalitaet',v)} dim="EMO1"/>
               </Field>
 
-              <Field label="International / weltoffenes Umfeld" badge="OPTIONAL" info="emo_international">
+              <Field label="International / weltoffenes Umfeld" badge="OPTIONAL" info="emo_international" mark={mk('emo_international')}>
                 <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'4px 0'}}>
                   <input
                     type="checkbox"
@@ -3841,7 +4241,7 @@ function App(){
                 </label>
               </Field>
 
-              <Field label="Eignet sich besonders für" badge="EMPFOHLEN" info="emo_persoenlichkeitsfit" hint="Wähle bis zu 3 Personas, die diese Reise besonders anspricht.">
+              <Field label="Eignet sich besonders für" badge="EMPFOHLEN" info="emo_persoenlichkeitsfit" mark={mk('emo_persoenlichkeitsfit')} hint="Wähle bis zu 3 Personas, die diese Reise besonders anspricht.">
                 <MC
                   options={VOC_PERSOENLICHKEITSFIT}
                   value={trip.emo_persoenlichkeitsfit}
@@ -3942,18 +4342,19 @@ function App(){
         </Section>
 
         <Section title="Persönliche Erfahrung" icon="💬" open={openSections.persoenlich} onToggle={()=>toggleSection('persoenlich')}>
-          <Field label="Persönliche Erfahrung" badge="PFLICHT"><TA placeholder="Wann warst du dort? Was war das Besondere?" rows={4} value={trip.persoenliche_erfahrung} onChange={v=>setT('persoenliche_erfahrung',v)}/></Field>
+          <Field label="Persönliche Erfahrung" badge="PFLICHT" mark={mk('persoenliche_erfahrung')}><TA placeholder="Wann warst du dort? Was war das Besondere?" rows={4} value={trip.persoenliche_erfahrung} onChange={v=>setT('persoenliche_erfahrung',v)}/></Field>
           {/* v0.19.5 (Aufgabe 47, Weg C): rein empfehlender statischer Hinweis am Top-Level-Feld (F1=a).
               Keine Validierung, keine Sperre — Feld bleibt als Fallback („Ort unklar") voll bedienbar.
               Enthält die manuelle Doppelbefüllungs-Regel bis c-Dedupe/Aufgabe 48 (F2=a, MASTER §6). */}
-          <Field label="Magic Moment" badge="EMPFOHLEN" hint="Magic Moments am besten direkt in der Tagesplanung des passenden Tages beschreiben — dort, wo sie örtlich hingehören. Dieses Feld nur nutzen, wenn der Ort noch unklar ist. Steht der Moment bereits im Tagesablauf, dieses Feld bitte leer lassen (sonst Doppelbefüllung)."><TA placeholder="Das eine Erlebnis, das diese Reise einzigartig macht..." rows={3} value={trip.magic_moment} onChange={v=>setT('magic_moment',v)}/></Field>
-          <Field label="Sicherheitshinweise" badge="EMPFOHLEN"><TA placeholder="Risiken, Einschränkungen..." rows={2} value={trip.sicherheitshinweise} onChange={v=>setT('sicherheitshinweise',v)}/></Field>
+          <Field label="Magic Moment" badge="EMPFOHLEN" mark={mk('magic_moment')} hint="Magic Moments am besten direkt in der Tagesplanung des passenden Tages beschreiben — dort, wo sie örtlich hingehören. Dieses Feld nur nutzen, wenn der Ort noch unklar ist. Steht der Moment bereits im Tagesablauf, dieses Feld bitte leer lassen (sonst Doppelbefüllung)."><TA placeholder="Das eine Erlebnis, das diese Reise einzigartig macht..." rows={3} value={trip.magic_moment} onChange={v=>setT('magic_moment',v)}/></Field>
+          <Field label="Sicherheitshinweise" badge="EMPFOHLEN" mark={mk('sicherheitshinweise')}><TA placeholder="Risiken, Einschränkungen..." rows={2} value={trip.sicherheitshinweise} onChange={v=>setT('sicherheitshinweise',v)}/></Field>
         </Section>
         </fieldset>
       </>}
 
       {/* TAGE TAB */}
       {!showJson&&tab==='tage'&&<>
+        {renderImportPanel()}
         {/* v0.12: Status-Hinweisbanner für Tage-Tab */}
         {!isEditableStatus(tripStatus)&&!correctionMode&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',color:'var(--anthrazit)',padding:'12px 16px',borderRadius:8,marginBottom:16,fontSize:13,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <span style={{fontSize:18}}>🔒</span>
@@ -4017,35 +4418,38 @@ function App(){
                 <button type="button" onClick={()=>moveTag(ti,1)} disabled={ti===tage.length-1} title="Tag nach unten" style={headerBtn(ti===tage.length-1)}>↓</button>
                 <button type="button" onClick={()=>removeTag(ti)} title="Tag löschen" style={{...headerBtn(false),color:'var(--red)'}}>✕</button>
               </div>
+              {/* v0.26.1: offene Interview-Vorschläge dieses Tages im Kopf anzeigen (auch zugeklappt). */}
+              {tag._marks&&Object.keys(tag._marks).length>0&&<span title="Offene Vorschläge aus Interview" style={{fontSize:10,fontWeight:700,color:'#8A3A24',background:'var(--coral-light)',padding:'2px 6px',borderRadius:4}}>{Object.keys(tag._marks).length} Vorschl.</span>}
               {tag.tag_typ&&<span style={{fontSize:11,color:'var(--sage)',background:'var(--white)',padding:'2px 8px',borderRadius:4}}>{tag.tag_typ}</span>}
               <span style={{fontSize:18,color:'var(--sage)'}}>{open?'▾':'▸'}</span>
             </div>
             {open&&<div style={{padding:16}}>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-                <Field label="Tag-Typ" badge="PFLICHT" half><Sel options={tagTypenOptsFor(tag.tag_typ)} value={tag.tag_typ} onChange={v=>updateTag(ti,'tag_typ',v)}/></Field>
-                <Field label="Tag-Titel" badge="EMPFOHLEN" half><TI placeholder="z.B. Die weißen Dörfer" value={tag.tag_titel} onChange={v=>updateTag(ti,'tag_titel',v)}/></Field>
+                <Field label="Tag-Typ" badge="PFLICHT" half mark={mkTag(ti,'tag_typ')}><Sel options={tagTypenOptsFor(tag.tag_typ)} value={tag.tag_typ} onChange={v=>updateTag(ti,'tag_typ',v)}/></Field>
+                <Field label="Tag-Titel" badge="EMPFOHLEN" half mark={mkTag(ti,'tag_titel')}><TI placeholder="z.B. Die weißen Dörfer" value={tag.tag_titel} onChange={v=>updateTag(ti,'tag_titel',v)}/></Field>
               </div>
               {/* v0.19.2 (S-1): optionales Tagesort-Feld — Ortschaft, in der der Tag spielt (WF10-Input-Anker). */}
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-                <Field label="Tagesort (Ortschaft)" badge="OPTIONAL" half info="tagesort"><TI placeholder="z.B. Meersburg" value={tag.tagesort} onChange={v=>updateTag(ti,'tagesort',v)}/></Field>
+                <Field label="Tagesort (Ortschaft)" badge="OPTIONAL" half info="tagesort" mark={mkTag(ti,'tagesort')}><TI placeholder="z.B. Meersburg" value={tag.tagesort} onChange={v=>updateTag(ti,'tagesort',v)}/></Field>
               </div>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
-                <Field label="Empf. Tagesstart" badge="EMPFOHLEN" half><TI placeholder="z.B. ca. 14:00" value={tag.tag_start} onChange={v=>updateTag(ti,'tag_start',v)}/></Field>
+                <Field label="Empf. Tagesstart" badge="EMPFOHLEN" half mark={mkTag(ti,'tag_start')}><TI placeholder="z.B. ca. 14:00" value={tag.tag_start} onChange={v=>updateTag(ti,'tag_start',v)}/></Field>
                 {isAbreisetag(tage,ti)?(()=>{
                   // v0.26.0 (L-WW-132): Abreisetag — keine leere Auswahl, kein Hotel-Fallback A.
                   const vRef=effHotelRef(tage,ti);
                   const vHotel=trip.hotels.find(h=>h.ref===vRef&&h.name);
                   const vLabel=vHotel?`Hotel ${vRef} — ${vHotel.name}`:'noch kein Hotel am Vortag';
-                  return <Field label="Unterkunft am Abreisetag" badge="EMPFOHLEN" half hint="Am Abreisetag gilt die Unterkunft der Vornacht.">
+                  return <Field label="Unterkunft am Abreisetag" badge="EMPFOHLEN" half mark={mkTag(ti,'hotel_ref')} hint="Am Abreisetag gilt die Unterkunft der Vornacht.">
                     <select style={{...iStyle,cursor:'pointer'}} value={tag.unterkunft_modus==='keine'?'keine':'vornacht'} onChange={e=>updateTag(ti,'unterkunft_modus',e.target.value)}>
-                      <option value="vornacht">{`Unterkunft der Vornacht (automatisch): ${vLabel}`}</option>
+                      <option value="vornacht">{`Vornacht (automatisch): ${vLabel}`}</option>
                       <option value="keine">Keine Übernachtung</option>
                     </select>
                   </Field>;
-                })():<Field label="Hotel für diese Nacht" badge="EMPFOHLEN" half><Sel options={trip.hotels.filter(h=>h.name).map(h=>({value:h.ref,label:`Hotel ${h.ref} — ${h.name}`}))} value={tag.hotel_ref} onChange={v=>updateTag(ti,'hotel_ref',v)}/></Field>}
+                })():<Field label="Hotel für diese Nacht" badge="EMPFOHLEN" half mark={mkTag(ti,'hotel_ref')}><Sel options={trip.hotels.filter(h=>h.name).map(h=>({value:h.ref,label:`Hotel ${h.ref} — ${h.name}`}))} value={tag.hotel_ref} onChange={v=>updateTag(ti,'hotel_ref',v)}/></Field>}
               </div>
 
-              <InsiderField number={2} title="Deine Tages-Story & Tipps (F2)" hint="Was macht diesen Tag besonders? Highlights, Tipps, Hinweis für morgen..." placeholder="Stichworte zum Tag..." value={tag.tag_story} onChange={v=>updateTag(ti,'tag_story',v)} rows={4}/>
+              <InsiderField number={2} title="Deine Tages-Story & Tipps (F2)" hint="Was macht diesen Tag besonders? Highlights, Tipps, Hinweis für morgen..." placeholder="Stichworte zum Tag..." value={tag.tag_story} onChange={v=>updateTag(ti,'tag_story',v)} rows={4} mark={mkTag(ti,'tag_story')}/>
+              {renderTagDeepMarks(ti)}
 
               {/* v0.14.3: Eine kombinierte Tagesablauf-Liste statt drei separater Sektionen.
                   Items aus stopps/restaurants/aktivitaeten werden nach position sortiert,
@@ -4191,6 +4595,95 @@ function App(){
         headerValue={authHeaderValue}
         onReRendered={(pdfUrl)=>setFreigabe(p=>({...p,kandidat_pdf_url:pdfUrl||p.kandidat_pdf_url,kandidat_generated_at:new Date().toISOString()}))}
       />}
+
+      {/* v0.26.1 (Brief e→b 2026-10-09 B1/B2/B3): Tab „Interview“ — nur admin/curator_master. */}
+      {!showJson&&tab==='interview'&&canManage&&(()=>{
+        const card={background:'var(--beige-light)',border:'1px solid #E0E0E0',borderRadius:8,padding:16,marginBottom:16};
+        const head={fontFamily:"'Playfair Display',Georgia,serif",fontSize:15,color:'var(--sage)',fontWeight:700,marginBottom:10};
+        const btn=(on,dis)=>({background:dis?'#F0F0F0':(on?'var(--sage)':'var(--white)'),color:dis?'#999':(on?'var(--white)':'var(--sage)'),border:'2px solid '+(dis?'#CCC':'var(--sage)'),padding:'7px 14px',borderRadius:6,fontSize:13,fontWeight:600,cursor:dis?'not-allowed':'pointer'});
+        const info=ivInfo||{};
+        const hasLink=!!info.interview_id;
+        const R1={offen:'offen',zwischenstand:'Zwischenstand',abgeschlossen:'abgeschlossen (vom Whisperer freigegeben)',importiert:'importiert'};
+        const TK={aktiv:'aktiv',gesperrt:'gesperrt',abgelaufen:'abgelaufen'};
+        const canImport=['abgeschlossen','importiert'].includes(info.status_runde1)&&(isEditableStatus(tripStatus)||correctionMode);
+        const busy=!!ivBusy;
+        const noDraft=!entwurfId||!draftPersisted;
+        const fmtTs=v=>{if(!v)return '—';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('de-DE');};
+        const rd=ivRead||{};
+        const block=(t,v,note)=>v?<div style={{marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:3}}>{t}{note&&<span style={{fontWeight:400,color:'#888',fontStyle:'italic'}}> — {note}</span>}</div><div style={{whiteSpace:'pre-wrap',background:'var(--white)',border:'1px solid #E0E0E0',borderRadius:6,padding:'8px 12px',fontSize:13,lineHeight:1.5}}>{typeof v==='string'?v:JSON.stringify(v,null,2)}</div></div>:null;
+        return <div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:18,color:'var(--sage)',fontWeight:700}}>🎙️ Whisperer-Interview</div>
+            <div style={{fontSize:12,color:'#777',marginTop:4,lineHeight:1.5}}>Persönlicher Chat-Link für den Whisperer (kein Login), Übernahme des freigegebenen Interviews ins Formular, Lesefassung.</div>
+            {role==='admin'&&<label style={{display:'inline-flex',alignItems:'center',gap:6,marginTop:8,fontSize:12,color:ivMock?'#8A6D00':'#777',background:ivMock?'var(--yellow)':'transparent',padding:'2px 8px',borderRadius:4}}>
+              <input type="checkbox" checked={ivMock} onChange={e=>{setIvMock(e.target.checked);setIvLoadedFor('');}}/> Mock-Modus (Testdaten statt WF-INT)
+            </label>}
+          </div>
+          {noDraft&&<div style={{...card,background:'#FFF4E5',borderColor:'var(--coral)',fontSize:13}}>Bitte den Entwurf zuerst speichern — Link und Import sind an eine gespeicherte <code>entwurf_id</code> gebunden.</div>}
+          {ivMsg&&<div style={{...card,padding:'10px 14px',fontSize:13,background:ivMsg.kind==='err'?'#FDECEA':ivMsg.kind==='ok'?'#EDF5EA':'var(--white)',borderColor:ivMsg.kind==='err'?'var(--red)':ivMsg.kind==='ok'?'var(--sage)':'#E0E0E0'}}>{ivMsg.text}</div>}
+
+          {/* B1 Link */}
+          <div style={card}>
+            <div style={head}>1 · Interview-Link</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:16,fontSize:13,marginBottom:12}}>
+              <div><span style={{color:'#888'}}>Runde 1:</span> <strong>{R1[info.status_runde1]||info.status_runde1||'—'}</strong></div>
+              <div><span style={{color:'#888'}}>Link:</span> <strong style={{color:info.token_status==='aktiv'?'var(--sage-dark)':info.token_status?'var(--red)':'inherit'}}>{TK[info.token_status]||info.token_status||'keiner'}</strong></div>
+              <div><span style={{color:'#888'}}>gültig bis:</span> <strong>{info.token_gueltig_bis?fmtTs(info.token_gueltig_bis):'—'}</strong></div>
+              {hasLink&&<div><span style={{color:'#888'}}>Whisperer:</span> <strong>{info.whisperer_name||'—'}</strong> {info.whisperer_email&&<span style={{color:'#888'}}>({info.whisperer_email})</span>} · Modus {info.modus||'—'}</div>}
+            </div>
+            {!hasLink&&<div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
+              <Field label="Name des Whisperers" badge="PFLICHT" half><TI placeholder="Vorname Nachname" value={ivForm.whisperer_name} onChange={v=>setIvForm(f=>({...f,whisperer_name:v}))}/></Field>
+              <Field label="E-Mail des Whisperers" badge="PFLICHT" half><TI placeholder="name@beispiel.de" value={ivForm.whisperer_email} onChange={v=>setIvForm(f=>({...f,whisperer_email:v}))}/></Field>
+              <Field label="Modus" badge="PFLICHT"><Radio name="iv_modus" value={ivForm.modus} onChange={v=>setIvForm(f=>({...f,modus:v}))} options={[{value:'a',label:'a — Interview ohne Material'},{value:'b',label:'b — mit Upload (Text, Word, PDF)'}]}/></Field>
+            </div>}
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {!hasLink&&<button type="button" disabled={busy||noDraft} onClick={()=>ivLinkAction('erzeugen')} style={btn(true,busy||noDraft)}>{ivBusy==='erzeugen'?'Erzeuge…':'Link erzeugen'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_status==='gesperrt'} onClick={()=>ivLinkAction('sperren')} style={btn(false,busy||noDraft||info.token_status==='gesperrt')}>{ivBusy==='sperren'?'Sperre…':'Link sperren'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_status==='gesperrt'} title={info.token_status==='gesperrt'?'Gesperrter Link: nur „Neuen Link erzeugen“':'Gleiche URL, +60 Tage'} onClick={()=>ivLinkAction('erneuern')} style={btn(false,busy||noDraft||info.token_status==='gesperrt')}>{ivBusy==='erneuern'?'Verlängere…':'Laufzeit verlängern'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft} title="Neue URL; die bisherige ist danach ungültig" onClick={()=>ivLinkAction('erneuern',{neues_token:true})} style={btn(false,busy||noDraft)}>Neuen Link erzeugen</button>}
+              <button type="button" disabled={busy||noDraft} onClick={()=>{ivLinkAction('status');ivLoadRead();}} style={btn(false,busy||noDraft)}>Status aktualisieren</button>
+              {ivMock&&hasLink&&<select value={info.status_runde1||''} onChange={e=>ivLinkAction('mock_status',{status_runde1:e.target.value})} style={{...iStyle,width:'auto',fontSize:12,background:'var(--yellow)'}} title="Nur Mock: Runde-1-Status simulieren">
+                {['offen','zwischenstand','abgeschlossen','importiert'].map(x=><option key={x} value={x}>Mock: {x}</option>)}
+              </select>}
+            </div>
+            {ivUrl&&<div style={{marginTop:12,background:'var(--white)',border:'2px solid var(--sage)',borderRadius:6,padding:'10px 12px'}}>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:6}}>Link für den Whisperer — wird nur jetzt angezeigt und ist danach nicht mehr abrufbar</div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input readOnly value={ivUrl} onFocus={e=>e.target.select()} style={{...iStyle,fontFamily:'monospace',fontSize:12}}/>
+                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(ivUrl);setIvMsg({kind:'ok',text:'Link kopiert.'});}catch{setIvMsg({kind:'err',text:'Kopieren nicht möglich — bitte manuell markieren und kopieren.'});}}} style={btn(true,false)}>Kopieren</button>
+              </div>
+            </div>}
+          </div>
+
+          {/* B2 Import */}
+          <div style={card}>
+            <div style={head}>2 · Aus Interview übernehmen</div>
+            <div style={{fontSize:12,color:'#777',marginBottom:10,lineHeight:1.5}}>Füllt das Formular aus dem freigegebenen Interview vor. Es wird <strong>nichts gespeichert</strong> — erst „💾 Speichern“ schreibt den Entwurf. Vorschläge (Stil-Faktoren, emotionaler Charakter, Tag-Typen, Taxonomien, Zielgruppe) sind markiert und werden durch ✓ oder Ändern bestätigt.</div>
+            <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?'Lade Interview-Daten…':'Aus Interview übernehmen'}</button>
+            {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
+            {importResult&&<div style={{marginTop:12}}>{renderImportPanel()}</div>}
+          </div>
+
+          {/* B3 Lesefassung */}
+          <div style={card}>
+            <div style={head}>3 · Interview (nur lesend)</div>
+            {ivBusy==='lesen'&&<div style={{fontSize:13,color:'#888'}}>Lade<span className="ww-dots"></span></div>}
+            {rd.error&&<div style={{fontSize:13,color:'var(--red)'}}>Fehler: {rd.error}</div>}
+            {!rd.error&&ivRead&&!rd.ergebnis_text&&<div style={{fontSize:13,color:'#888'}}>Noch keine freigegebene Fassung vorhanden.</div>}
+            {!rd.error&&rd.ergebnis_text&&<div>
+              <div style={{fontSize:11,color:'#888',marginBottom:10}}>Erstellt {fmtTs(rd.zeitstempel&&rd.zeitstempel.created_at)} · freigegeben {fmtTs(rd.zeitstempel&&rd.zeitstempel.abgeschlossen_at)} · importiert {fmtTs(rd.zeitstempel&&rd.zeitstempel.importiert_at)}</div>
+              {block('Lesefassung',rd.ergebnis_text)}
+              {block('Offene Punkte',rd.offene_punkte)}
+              {block('Stimmung',rd.stimmung,'Eindruck des Interviewers, keine Aussage des Whisperers')}
+              {block('Herkunft',rd.herkunft)}
+              {Array.isArray(rd.material)&&rd.material.length>0&&<div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:3}}>Material</div>
+                <ul style={{margin:'0 0 0 18px',fontSize:13}}>{rd.material.map((m,i)=><li key={i}>{(m&&(m.dateiname||m.name))||JSON.stringify(m)}{m&&m.typ?<span style={{color:'#888'}}> ({m.typ})</span>:null}</li>)}</ul>
+              </div>}
+            </div>}
+          </div>
+        </div>;
+      })()}
 
       {/* v0.17.0: ADMIN-TAB — globaler Wortbudget-Default (nur admin/curator_master). */}
       {!showJson&&tab==='admin'&&canManage&&(()=>{
