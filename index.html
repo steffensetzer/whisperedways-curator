@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.26.4 (e-D204 · mit_kindern)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.26.5 (Aufgabe 55 · Import-Timeout, Gb)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -278,8 +278,10 @@ function Radio({options,value,onChange,name}){
     const disabled=!!(o&&typeof o==='object'&&o.disabled);
     const title=(o&&typeof o==='object'&&o.title)||'';
     const selected=value===v;
-    return <label key={v} title={title} style={{padding:'6px 14px',borderRadius:20,border:`1px solid ${selected?'var(--sage)':'#D0D0D0'}`,background:disabled?'#F0F0F0':(selected?'var(--sage-light)':'var(--white)'),color:disabled?'#999':'var(--anthrazit)',fontSize:13,cursor:disabled?'not-allowed':'pointer',display:'flex',alignItems:'center',gap:4,opacity:disabled?0.7:1}}><input type="radio" name={name} checked={selected} onChange={()=>{if(!disabled)onChange(v);}} disabled={disabled} style={{display:'none'}}/>{l}</label>;
-  })}</div>;
+    // v0.26.5 (Gb): ausgewählte, aber deaktivierte Option (z. B. reise_charakter „gruppe“ aus dem Import)
+    // sichtbar als gewählt darstellen; Wert bleibt erhalten, bis eine andere Option gewählt wird.
+    return <label key={v} title={title} style={{padding:'6px 14px',borderRadius:20,border:`${selected?2:1}px solid ${selected?'var(--sage)':'#D0D0D0'}`,background:(disabled&&!selected)?'#F0F0F0':(selected?'var(--sage-light)':'var(--white)'),color:(disabled&&!selected)?'#999':'var(--anthrazit)',fontSize:13,fontWeight:(selected&&disabled)?700:400,cursor:disabled?'not-allowed':'pointer',display:'flex',alignItems:'center',gap:4,opacity:(disabled&&!selected)?0.7:1}}><input type="radio" name={name} checked={selected} onChange={()=>{if(!disabled)onChange(v);}} disabled={disabled} style={{display:'none'}}/>{l}{selected&&disabled?' (gesetzt, derzeit nicht wählbar)':''}</label>;
+  })}{value&&!(options||[]).some(o=>optV(o)===value)&&<label title="Wert nicht in der Optionsliste — bleibt beim Speichern erhalten" style={{padding:'6px 14px',borderRadius:20,border:'2px solid var(--sage)',background:'var(--sage-light)',fontSize:13,fontWeight:700,display:'flex',alignItems:'center'}}>{value} (gesetzt, nicht in Liste)</label>}</div>;
 }
 
 function Slider({labels,value=3,onChange,dim}){
@@ -2741,6 +2743,12 @@ function App(){
   const[ivForm,setIvForm]=useState({whisperer_name:'',whisperer_email:'',modus:'a'});
   const[ivUrl,setIvUrl]=useState('');            // nur direkt nach erzeugen/erneuern; nie gespeichert
   const[ivBusy,setIvBusy]=useState('');
+  const[ivElapsed,setIvElapsed]=useState(0);   // v0.26.5: Sekunden-Zähler während importieren
+  useEffect(()=>{
+    if(ivBusy!=='import'){setIvElapsed(0);return;}
+    const t0=Date.now();const id=setInterval(()=>setIvElapsed(Math.round((Date.now()-t0)/1000)),1000);
+    return()=>clearInterval(id);
+  },[ivBusy]);
   const[ivMsg,setIvMsg]=useState(null);          // {kind:'ok'|'err'|'info',text}
   const[ivRead,setIvRead]=useState(null);        // Lesefassung (A1-7)
   const[ivLoadedFor,setIvLoadedFor]=useState('');
@@ -2760,10 +2768,16 @@ function App(){
     return r;
   };
   // Live-Aufruf WF-INT. Mock-Antworten laufen über ivRequireOk.
+  // v0.26.5: importieren kann 1–3 min dauern (n8n-Timeout 300 s) → Client-Timeout 310 s; sonst 60 s.
   const ivFetch=async(action,payload)=>{
     const headers={'Content-Type':'application/json'};
     if(authHeaderName&&authHeaderValue) headers[authHeaderName]=authHeaderValue;
-    const res=await fetch(ivBase(),{method:'POST',headers,body:JSON.stringify({action,user_id:currentUserId,role,...payload})});
+    const ctl=new AbortController();const ms=action==='importieren'?310000:60000;
+    const tmr=setTimeout(()=>ctl.abort(),ms);
+    let res;
+    try{res=await fetch(ivBase(),{method:'POST',headers,signal:ctl.signal,body:JSON.stringify({action,user_id:currentUserId,role,...payload})});}
+    catch(e){clearTimeout(tmr);if(e&&e.name==='AbortError') throw ivErr(null,0,'Zeitüberschreitung nach '+Math.round(ms/1000)+' s ('+action+')');throw e;}
+    clearTimeout(tmr);
     const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch{}
     if(!data) throw ivErr(null,res.status,'HTTP '+res.status+': '+(txt.substring(0,150)||'leere Antwort'));
     if(data.ok!==true) throw ivErr(data,res.status,action);
@@ -2836,13 +2850,13 @@ function App(){
         restaurants:[{position:2,name:'[Mock] Restaurant '+(i+1),mahlzeit:'Abendessen',charakter:'',preis:'',adresse:'',telefon:'',warum:'[Mock] Warum-Satz'}],aktivitaeten:[]});
     }
     return {ok:true,interview_id:st.interview_id,entwurf_id:entwurfId,
-      felder:{anzahl_tage:n,params_json:{reise_ort:trip.reise_ort||'[Mock] Testreise',anzahl_tage:n,tage:tg},mit_kindern:true,
+      felder:{anzahl_tage:n,params_json:{reise_ort:trip.reise_ort||'[Mock] Testreise',anzahl_tage:n,tage:tg},mit_kindern:true,reise_charakter:'gruppe',
         taxonomien_patch:{reise_art:trip.reise_format||'',erlebnistyp:trip.reise_thema||[],zielgruppe:trip.zielgruppe||[]},
-        reise_charakter:trip.reise_charakter||'',empfohlene_monate_json:{mai:1,okt:1,aug:3},mietwagen:'empfohlen',flughafen_empfehlung:'[Mock] Flughafen A (1 h)',
+        empfohlene_monate_json:{mai:1,okt:1,aug:3},mietwagen:'empfohlen',flughafen_empfehlung:'[Mock] Flughafen A (1 h)',
         hotels_pool_json:[{ref:'A',hotel_id:'',name:'[Mock] Gästehaus Beispiel',kategorie:'',adresse:'',telefon:'',tipps:'[Mock] Zimmer zum Hof',naechte:'Tag 1-'+(n-1),wp_url:''}],
         freitext_gesamtreise:'[Mock] Insider-Wissen zur Gesamtreise aus dem Interview.',aktivitaets_level:'moderat',zielgruppe:trip.zielgruppe||[],anreise:['Flug']},
       vorschlaege:{match_dimensions_json:{pace:2,comfort:4,authenticity:4},emo_tonalitaet:2,emo_persoenlichkeitsfit:['genießer'],trust_signale:[]},
-      markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'},{pfad:'mit_kindern',grund:'[Mock] Kinder im Interview erwähnt'}],
+      markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'vorschlaege.emo_tonalitaet',grund:'[Mock] „eher ernste Gespräche“'},{pfad:'vorschlaege.match_dimensions_json.pace',grund:'[Mock] „gemächlich“'},{pfad:'hotels_pool_json[0].name',grund:'[Mock] Name sinngemäß'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'},{pfad:'mit_kindern',grund:'[Mock] Kinder im Interview erwähnt'}],
       kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen'],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
   };
 
@@ -2924,8 +2938,11 @@ function App(){
       return {tag:Number(mt[1]),key:rest};
     }
     if(p.startsWith('params_json.')) p=p.slice(12);
-    for(const k of Object.keys(IV_TOP_MAP)){ if(p===k||p.startsWith(k+'.')) return {key:IV_TOP_MAP[k]+p.slice(k.length)}; }
-    return {key:p};
+    for(const k of Object.keys(IV_TOP_MAP)){ if(p===k||p.startsWith(k+'.')||p.startsWith(k+'[')) { p=IV_TOP_MAP[k]+p.slice(k.length); break; } }
+    // v0.26.5: Unterpfade (z. B. hotels[0].name, empfohlene_monate.mai) am Feld anzeigen; nur Stil-Faktoren je Regler.
+    const head=p.split(/[.[]/)[0];
+    if(head==='match') return {key:p.split('[')[0]};
+    return {key:head,sub:p!==head?p:''};
   };
   const IV_LABEL={reise_ort:'Titel / Destination',tage:'Tagesplanung',reise_format:'Reise-Format',reise_thema:'Reise-Thema',zielgruppe:'Zielgruppe',reise_charakter:'Reise-Art',empfohlene_monate:'Empfohlene Reisemonate',mietwagen:'Mietwagen',flughafen_empfehlung:'Empfohlene Flughäfen',hotels:'Hotels',freitext_gesamtreise:'Insider-Wissen zur Gesamtreise',aktivitaets_level:'Aktivitäts-Level',anreise:'Anreise',persoenliche_erfahrung:'Persönliche Erfahrung',mit_kindern:'Mit Kindern',magic_moment:'Magic Moment',sicherheitshinweise:'Sicherheitshinweise',match:'Stil-Faktoren',emo_tonalitaet:'Tonalität',emo_international:'International',emo_persoenlichkeitsfit:'Eignet sich besonders für',trust_signale:'Beratungsgespräch'};
   const ivLabelFor=k=>{
@@ -3019,8 +3036,9 @@ function App(){
         (tagMarks[mp.tag]=tagMarks[mp.tag]||{})[mp.key]=g;
       }else{
         // Grund an vorhandene Vorschlags-Markierung hängen, sonst eigene Markierung
+        const gg=mp.sub?(mp.sub+': '+g):g;
         const hit=Object.keys(topMarks).filter(k=>k===mp.key||k.startsWith(mp.key+'.'));
-        if(hit.length) hit.forEach(k=>{topMarks[k]=g;}); else topMarks[mp.key]=g;
+        if(hit.length) hit.forEach(k=>{const old=topMarks[k];topMarks[k]=(old&&old!=='Vorschlag aus Interview'&&old!==gg)?old+' | '+gg:gg;}); else topMarks[mp.key]=gg;
       }
     });
     setTrip(p=>({...p,...patch}));
@@ -3781,7 +3799,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.4 (e-D204 · mit_kindern)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.5 (Aufgabe 55 · Import-Timeout, Gb)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4685,7 +4703,8 @@ function App(){
           <div style={card}>
             <div style={head}>2 · Aus Interview übernehmen</div>
             <div style={{fontSize:12,color:'#777',marginBottom:10,lineHeight:1.5}}>Füllt das Formular aus dem freigegebenen Interview vor. Es wird <strong>nichts gespeichert</strong> — erst „💾 Speichern“ schreibt den Entwurf. Vorschläge (Stil-Faktoren, emotionaler Charakter, Tag-Typen, Taxonomien, Zielgruppe) sind markiert und werden durch ✓ oder Ändern bestätigt.</div>
-            <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?'Lade Interview-Daten…':'Aus Interview übernehmen'}</button>
+            <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?<span>Interview wird übernommen<span className="ww-dots"></span> {ivElapsed}s</span>:'Aus Interview übernehmen'}</button>
+            {ivBusy==='import'&&<div style={{fontSize:12,color:'#777',marginTop:6}}>Der Import kann 1–3 Minuten dauern. Bitte die Seite nicht schließen.</div>}
             {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
             {importResult&&<div style={{marginTop:12}}>{renderImportPanel()}</div>}
           </div>
