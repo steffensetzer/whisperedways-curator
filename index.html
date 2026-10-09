@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.26.3 (Aufgabe 55 · Interview WF-INT v1.1)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.26.4 (e-D204 · mit_kindern)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1609,6 +1609,8 @@ function App(){
     // v0.19.0: Default = Komma-Kaskade 'adobe,unsplash' (Adobe primär, Unsplash Fallback; e-D49). Wirkt nur auf Neuanlagen (Bestandsschutz = Variante b).
     image_source_priority:'adobe,unsplash',
     freitext_gesamtreise:'', persoenliche_erfahrung:'', magic_moment:'', sicherheitshinweise:'',
+    // v0.26.4 (e-D204): mit_kindern als Formularfeld (vorher fest false in buildPayload).
+    mit_kindern:false,
     trust_signale:[], empfohlene_monate:{},
     match: {pre_curation:3, pace:3, solitude_social:3, comfort:3, cultural_depth:3, activity_mode:3, authenticity:3},
     hotels: [{ref:'A', hotel_id:'', name:'', kategorie:'', adresse:'', telefon:'', tipps:'', naechte:'', wp_url:''}],
@@ -2204,6 +2206,8 @@ function App(){
         persoenliche_erfahrung:d.persoenliche_erfahrung||p.persoenliche_erfahrung,
         magic_moment:d.magic_moment||p.magic_moment,
         sicherheitshinweise:d.sicherheitshinweise||p.sicherheitshinweise,
+        // v0.26.4 (e-D204): Sheet speichert "true"/"false" als String.
+        mit_kindern:d.mit_kindern===true||d.mit_kindern==='true'||d.mit_kindern===1||d.mit_kindern==='1'||d.mit_kindern==='TRUE',
         aktivitaets_level:d.aktivitaets_level||p.aktivitaets_level,
         hotels:safeJson(d.hotels_pool_json,p.hotels),
         anreise:safeJson(d.anreise,p.anreise),
@@ -2832,13 +2836,13 @@ function App(){
         restaurants:[{position:2,name:'[Mock] Restaurant '+(i+1),mahlzeit:'Abendessen',charakter:'',preis:'',adresse:'',telefon:'',warum:'[Mock] Warum-Satz'}],aktivitaeten:[]});
     }
     return {ok:true,interview_id:st.interview_id,entwurf_id:entwurfId,
-      felder:{anzahl_tage:n,params_json:{reise_ort:trip.reise_ort||'[Mock] Testreise',anzahl_tage:n,tage:tg},mit_kindern:false,
+      felder:{anzahl_tage:n,params_json:{reise_ort:trip.reise_ort||'[Mock] Testreise',anzahl_tage:n,tage:tg},mit_kindern:true,
         taxonomien_patch:{reise_art:trip.reise_format||'',erlebnistyp:trip.reise_thema||[],zielgruppe:trip.zielgruppe||[]},
         reise_charakter:trip.reise_charakter||'',empfohlene_monate_json:{mai:1,okt:1,aug:3},mietwagen:'empfohlen',flughafen_empfehlung:'[Mock] Flughafen A (1 h)',
         hotels_pool_json:[{ref:'A',hotel_id:'',name:'[Mock] Gästehaus Beispiel',kategorie:'',adresse:'',telefon:'',tipps:'[Mock] Zimmer zum Hof',naechte:'Tag 1-'+(n-1),wp_url:''}],
         freitext_gesamtreise:'[Mock] Insider-Wissen zur Gesamtreise aus dem Interview.',aktivitaets_level:'moderat',zielgruppe:trip.zielgruppe||[],anreise:['Flug']},
-      vorschlaege:{match_dimensions_json:{pace:2,comfort:4,authenticity:4},emo_tonalitaet:2,emo_international:false,emo_persoenlichkeitsfit:['genießer'],trust_signale:[]},
-      markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'}],
+      vorschlaege:{match_dimensions_json:{pace:2,comfort:4,authenticity:4},emo_tonalitaet:2,emo_persoenlichkeitsfit:['genießer'],trust_signale:[]},
+      markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'},{pfad:'mit_kindern',grund:'[Mock] Kinder im Interview erwähnt'}],
       kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen'],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
   };
 
@@ -2905,6 +2909,7 @@ function App(){
 
   // ---------- B2: Import „Aus Interview übernehmen“ ----------
   // Pfad aus S2 (markierung[].pfad) → Formular-Key. Tage: 'params_json.tage[i].<rest>' → {tag:i,key}.
+  // e-D204: Index 0-basiert (params_json.tage[0] = Tag 1).
   const IV_TOP_MAP={match_dimensions_json:'match',empfohlene_monate_json:'empfohlene_monate',hotels_pool_json:'hotels','taxonomien_patch.reise_art':'reise_format','taxonomien_patch.erlebnistyp':'reise_thema','taxonomien_patch.zielgruppe':'zielgruppe'};
   const IV_TAG_MAP={tag_ort:'tag_titel',tag_beschreibung:'tag_story',tag_unterkunft:'hotel_ref'};
   const ivMapPfad=(pfad)=>{
@@ -2922,7 +2927,7 @@ function App(){
     for(const k of Object.keys(IV_TOP_MAP)){ if(p===k||p.startsWith(k+'.')) return {key:IV_TOP_MAP[k]+p.slice(k.length)}; }
     return {key:p};
   };
-  const IV_LABEL={reise_ort:'Titel / Destination',tage:'Tagesplanung',reise_format:'Reise-Format',reise_thema:'Reise-Thema',zielgruppe:'Zielgruppe',reise_charakter:'Reise-Art',empfohlene_monate:'Empfohlene Reisemonate',mietwagen:'Mietwagen',flughafen_empfehlung:'Empfohlene Flughäfen',hotels:'Hotels',freitext_gesamtreise:'Insider-Wissen zur Gesamtreise',aktivitaets_level:'Aktivitäts-Level',anreise:'Anreise',persoenliche_erfahrung:'Persönliche Erfahrung',magic_moment:'Magic Moment',sicherheitshinweise:'Sicherheitshinweise',match:'Stil-Faktoren',emo_tonalitaet:'Tonalität',emo_international:'International',emo_persoenlichkeitsfit:'Eignet sich besonders für',trust_signale:'Beratungsgespräch'};
+  const IV_LABEL={reise_ort:'Titel / Destination',tage:'Tagesplanung',reise_format:'Reise-Format',reise_thema:'Reise-Thema',zielgruppe:'Zielgruppe',reise_charakter:'Reise-Art',empfohlene_monate:'Empfohlene Reisemonate',mietwagen:'Mietwagen',flughafen_empfehlung:'Empfohlene Flughäfen',hotels:'Hotels',freitext_gesamtreise:'Insider-Wissen zur Gesamtreise',aktivitaets_level:'Aktivitäts-Level',anreise:'Anreise',persoenliche_erfahrung:'Persönliche Erfahrung',mit_kindern:'Mit Kindern',magic_moment:'Magic Moment',sicherheitshinweise:'Sicherheitshinweise',match:'Stil-Faktoren',emo_tonalitaet:'Tonalität',emo_international:'International',emo_persoenlichkeitsfit:'Eignet sich besonders für',trust_signale:'Beratungsgespräch'};
   const ivLabelFor=k=>{
     const [h,sub]=k.split('.');
     return (IV_LABEL[h]||h)+(sub?' · '+sub:'');
@@ -2932,6 +2937,7 @@ function App(){
     if(Array.isArray(v)) return v.length>0;
     if(typeof v==='object') return Object.keys(v).length>0;
     if(typeof v==='string') return v.trim()!=='';
+    if(typeof v==='boolean') return v;
     return true;
   };
   const ivTagHasContent=t=>!!((t.tag_titel||'').trim()||(t.tag_story||'').trim()||(t.tag_typ||'').trim()||(t.stopps||[]).some(s=>s&&(s.name||'').trim())||(t.restaurants||[]).some(r=>r&&(r.name||'').trim())||(t.aktivitaeten||[]).some(a=>a&&(a.name||'').trim()));
@@ -2970,15 +2976,19 @@ function App(){
       });
       if(!patch.hotels.length) patch.hotels=[{ref:'A',hotel_id:'',name:'',kategorie:'',adresse:'',telefon:'',tipps:'',naechte:'',wp_url:''}];
     }
-    if(has(f,'mit_kindern')) hinweise.push('mit_kindern: kein Formularfeld — Speichern sendet weiterhin false (Wert aus Interview: '+String(f.mit_kindern)+') [UNSICHER].');
+    // v0.26.4 (e-D204): mit_kindern ins Formular; markiert nur, wenn markierung[] es nennt.
+    if(has(f,'mit_kindern')&&f.mit_kindern!==null&&f.mit_kindern!==undefined) patch.mit_kindern=f.mit_kindern===true||f.mit_kindern==='true'||f.mit_kindern===1||f.mit_kindern==='1';
     // Vorschläge (immer markiert)
     const vMarks={};
-    const mdj=has(v,'match_dimensions_json')?pj(v.match_dimensions_json):null;
-    if(mdj&&typeof mdj==='object'){patch.match={...trip.match};Object.keys(mdj).forEach(k=>{const n=Number(mdj[k]);if(n>=1&&n<=5){patch.match[k]=n;vMarks['match.'+k]=true;}else hinweise.push(`Stil-Faktor ${k}: ungültiger Wert ${JSON.stringify(mdj[k])} ignoriert.`);});}
-    if(has(v,'emo_tonalitaet')){const n=Number(v.emo_tonalitaet);if(n>=1&&n<=5){patch.emo_tonalitaet=n;vMarks.emo_tonalitaet=true;}else hinweise.push('Tonalität: ungültiger Wert ignoriert.');}
-    if(has(v,'emo_international')){patch.emo_international=v.emo_international===true||v.emo_international==='true'||v.emo_international===1;vMarks.emo_international=true;}
-    if(has(v,'emo_persoenlichkeitsfit')){const a=Array.isArray(v.emo_persoenlichkeitsfit)?v.emo_persoenlichkeitsfit:[];const ok=VOC_PERSOENLICHKEITSFIT.map(o=>o.value);const bad=a.filter(x=>!ok.includes(x));if(bad.length)hinweise.push('Eignet sich besonders für: unbekannte Werte ignoriert ('+bad.join(', ')+').');patch.emo_persoenlichkeitsfit=a.filter(x=>ok.includes(x)).slice(0,3);vMarks.emo_persoenlichkeitsfit=true;}
-    if(has(v,'trust_signale')){const t=v.trust_signale;patch.trust_signale=Array.isArray(t)?t.filter(x=>x==='beratung_moeglich'):(t===true?['beratung_moeglich']:[]);vMarks.trust_signale=true;}
+    // e-NOTIZ 2026-10-09 §2: Fehlt ein Schlüssel (kein Beleg im Interview), ist das „kein Vorschlag“:
+    // Formularwert bleibt, keine Markierung. null/undefined/'' wird wie fehlend behandelt.
+    const hv=k=>has(v,k)&&v[k]!==null&&v[k]!==undefined&&v[k]!=='';
+    const mdj=hv('match_dimensions_json')?pj(v.match_dimensions_json):null;
+    if(mdj&&typeof mdj==='object'&&Object.keys(mdj).some(k=>mdj[k]!==null&&mdj[k]!==undefined&&mdj[k]!=='')){patch.match={...trip.match};Object.keys(mdj).forEach(k=>{if(mdj[k]===null||mdj[k]===undefined||mdj[k]==='')return;const n=Number(mdj[k]);if(n>=1&&n<=5){patch.match[k]=n;vMarks['match.'+k]=true;}else hinweise.push(`Stil-Faktor ${k}: ungültiger Wert ${JSON.stringify(mdj[k])} ignoriert.`);});}
+    if(hv('emo_tonalitaet')){const n=Number(v.emo_tonalitaet);if(n>=1&&n<=5){patch.emo_tonalitaet=n;vMarks.emo_tonalitaet=true;}else hinweise.push('Tonalität: ungültiger Wert ignoriert.');}
+    if(hv('emo_international')){patch.emo_international=v.emo_international===true||v.emo_international==='true'||v.emo_international===1;vMarks.emo_international=true;}
+    if(hv('emo_persoenlichkeitsfit')){const a=Array.isArray(v.emo_persoenlichkeitsfit)?v.emo_persoenlichkeitsfit:[];const ok=VOC_PERSOENLICHKEITSFIT.map(o=>o.value);const bad=a.filter(x=>!ok.includes(x));if(bad.length)hinweise.push('Eignet sich besonders für: unbekannte Werte ignoriert ('+bad.join(', ')+').');patch.emo_persoenlichkeitsfit=a.filter(x=>ok.includes(x)).slice(0,3);vMarks.emo_persoenlichkeitsfit=true;}
+    if(hv('trust_signale')){const t=v.trust_signale;patch.trust_signale=Array.isArray(t)?t.filter(x=>x==='beratung_moeglich'):(t===true?['beratung_moeglich']:[]);vMarks.trust_signale=true;}
     // Tage
     let newTage=null;
     if(params&&Array.isArray(params.tage)){
@@ -3032,7 +3042,7 @@ function App(){
     });
     setImportChecks({});
     // Abschnitte mit Markierungen aufklappen
-    const sec={reise_ort:'basis',anreise:'basis',empfohlene_monate:'basis',mietwagen:'logistik',flughafen_empfehlung:'logistik',hotels:'logistik',freitext_gesamtreise:'logistik',reise_format:'taxonomie',reise_thema:'taxonomie',reise_charakter:'taxonomie',zielgruppe:'taxonomie',aktivitaets_level:'taxonomie',match:'match',trust_signale:'match',emo_tonalitaet:'match',emo_international:'match',emo_persoenlichkeitsfit:'match',persoenliche_erfahrung:'persoenlich',magic_moment:'persoenlich',sicherheitshinweise:'persoenlich'};
+    const sec={reise_ort:'basis',anreise:'basis',empfohlene_monate:'basis',mietwagen:'logistik',flughafen_empfehlung:'logistik',hotels:'logistik',freitext_gesamtreise:'logistik',reise_format:'taxonomie',reise_thema:'taxonomie',reise_charakter:'taxonomie',zielgruppe:'taxonomie',aktivitaets_level:'taxonomie',mit_kindern:'taxonomie',match:'match',trust_signale:'match',emo_tonalitaet:'match',emo_international:'match',emo_persoenlichkeitsfit:'match',persoenliche_erfahrung:'persoenlich',magic_moment:'persoenlich',sicherheitshinweise:'persoenlich'};
     setOpenSections(o=>{const n={...o};Object.keys(topMarks).forEach(k=>{const s2=sec[k.split('.')[0]];if(s2)n[s2]=true;});return n;});
   };
   const handleImport=async()=>{
@@ -3178,7 +3188,7 @@ function App(){
       quelltext,
       params,
       taxonomien:taxonomienOut,
-      mit_kindern:false,
+      mit_kindern:!!trip.mit_kindern,  // v0.26.4 (e-D204): tatsächlicher Wert statt fest false
       hotel_ids:JSON.stringify(trip.hotels.filter(h=>h.hotel_id).map(h=>h.hotel_id)),
       image_source_priority:(trip.image_source_priority||'unsplash'),
       user_id:currentUserId,
@@ -3771,7 +3781,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.3 (Aufgabe 55 · Interview WF-INT v1.1)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.4 (e-D204 · mit_kindern)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4194,6 +4204,13 @@ function App(){
             <Field label="Angebots-Stufe" badge="PFLICHT" half><MC options={taxTier} value={trip.tier} onChange={v=>setT('tier',v)} columns={1}/></Field>
           </div>
           <Field label="Aktivitäts-Level" badge="PFLICHT" mark={mk('aktivitaets_level')}><Radio options={[{value:'leicht',label:'Leicht'},{value:'moderat',label:'Moderat'},{value:'anspruchsvoll',label:'Anspruchsvoll'}]} value={trip.aktivitaets_level} onChange={v=>setT('aktivitaets_level',v)} name="level"/></Field>
+          {/* v0.26.4 (e-D204): mit_kindern — vorher kein Feld, Speichern sendete fest false. */}
+          <Field label="Mit Kindern" badge="OPTIONAL" mark={mk('mit_kindern')}>
+            <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'4px 0'}}>
+              <input type="checkbox" checked={!!trip.mit_kindern} onChange={e=>setT('mit_kindern',e.target.checked)}/>
+              <span style={{fontSize:13}}>Ja, die Reise ist für Reisen mit Kindern geeignet</span>
+            </label>
+          </Field>
         </Section>
 
         <Section title="Stil-Faktoren der Reise" icon="🎯" open={openSections.match} onToggle={()=>toggleSection('match')}>
