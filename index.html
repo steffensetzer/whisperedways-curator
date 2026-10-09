@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.25.0 (L-WW-128 · Places-Picker-Warnhinweis)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.26.0 (L-WW-132 · Abreisetag Vornacht)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -1910,6 +1910,19 @@ function App(){
 
   // === TAG ===
   const updateTag=(idx,key,val)=>setTage(p=>{const n=[...p];n[idx]={...n[idx],[key]:val};return n;});
+  // v0.26.0 (L-WW-132, Brief e→b 2026-10-09 B5): Abreisetag = Tag mit tag_typ 'abreisetag' (Entscheid Steffen).
+  // Dort gilt immer die Unterkunft der Vornacht (e-D185): hotel_ref wird aus dem Vortag abgeleitet, nie
+  // aus der eigenen Auswahl — die leere Auswahl kann dort kein Hotel A mehr erzeugen. Zusätzlich je Tag
+  // unterkunft_modus 'vornacht' (Default) | 'keine' (NEU-1, additives Feld in params_json.tage; c-Abstimmung).
+  // Bei 'keine' bleibt hotel_ref = Vortag (Brief: bis zur c-Klärung), nur tag_unterkunft wird leer.
+  // Abreisetag an Position 1 (kein Vortag) → normale Hotel-Auswahl.
+  const isAbreisetag=(arr,i)=>!!(arr[i]&&arr[i].tag_typ==='abreisetag'&&i>0);
+  const effHotelRef=(arr,i)=>{
+    for(let k=i;k>=0;k--){
+      if(!isAbreisetag(arr,k)) return (arr[k]&&arr[k].hotel_ref)||'A';
+    }
+    return 'A';
+  };
   const addTag=()=>{
     const newTag={tag_nummer:tage.length+1,tag_typ:'',tag_titel:'',tag_start:'',tag_story:'',tagesort:'',hotel_ref:'A',zimmer_tipp:'',
       stopps:[{position:1,name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
@@ -2179,6 +2192,8 @@ function App(){
         tag_story:t.tag_story||t.tag_beschreibung||'',
         tagesort:t.tagesort||'',
         hotel_ref:t.hotel_ref||'A',
+        // v0.26.0 (L-WW-132): nur 'keine' explizit, alles andere = Vornacht (Bestand ohne Feld).
+        unterkunft_modus:t.unterkunft_modus==='keine'?'keine':'vornacht',
         zimmer_tipp:t.zimmer_tipp||'',
         stopps:Array.isArray(t.stopps)&&t.stopps.length?t.stopps:[{name:'',adresse:'',uhrzeit:'',dauer:'',besonderheit:'',insider_tipps:'',ort_profil:false}],
         restaurants:Array.isArray(t.restaurants)&&t.restaurants.length?t.restaurants:[{name:'',mahlzeit:'',charakter:'',preis:'',adresse:'',telefon:'',warum:''}],
@@ -2690,11 +2705,16 @@ function App(){
       unterkunft_global:trip.hotels[0]?.name||'',
       faq_seeds:'',
       image_source_priority:(trip.image_source_priority||'unsplash'),
-      tage:tage.map(t=>({
+      tage:tage.map((t,ti)=>{
+        // v0.26.0 (L-WW-132): Abreisetag → hotel_ref = Vornacht; bei 'keine' tag_unterkunft leer.
+        const abreise=isAbreisetag(tage,ti);
+        const hRef=abreise?effHotelRef(tage,ti):(t.hotel_ref||'A');
+        const keine=abreise&&t.unterkunft_modus==='keine';
+        return {
         tag_nummer:String(t.tag_nummer),
         tag_ort:t.tag_titel||'',
         tag_beschreibung:t.tag_story||'',
-        tag_unterkunft:trip.hotels.find(h=>h.ref===t.hotel_ref)?.name||'',
+        tag_unterkunft:keine?'':(trip.hotels.find(h=>h.ref===(abreise?hRef:t.hotel_ref))?.name||''),
         // v0.14.3: tag_highlight basiert jetzt auf der nach position sortierten Liste — der erste
         // ausgefüllte Stopp im chronologischen Tagesablauf wird als Highlight verwendet (vorher
         // war es t.stopps[0], also der erste Stopp im Original-Array, was nach der Mix-Restrukturierung
@@ -2711,7 +2731,9 @@ function App(){
         // v0.19.2 (S-1): additives Tagesort-Feld je Tag (Ortschaft, in der der Tag spielt).
         // Freitext, leer erlaubt, nur getrimmt. Backend fällt bei leer auf reise_ort zurück.
         tagesort:(t.tagesort||'').trim(),
-        hotel_ref:t.hotel_ref||'A',
+        hotel_ref:hRef,
+        // v0.26.0 (L-WW-132, NEU-1): nur am Abreisetag mitgesendet (additiv).
+        ...(abreise?{unterkunft_modus:keine?'keine':'vornacht'}:{}),
         zimmer_tipp:t.zimmer_tipp||'',
         // v0.14.3: position-Feld wird mitgespeichert, damit der gemischte Tagesablauf beim Reload
         // korrekt wiederhergestellt werden kann (Stopp ↔ Food ↔ Aktivität gemischt nach position).
@@ -2720,7 +2742,8 @@ function App(){
         stopps:t.stopps.filter(s=>s.name).map(s=>({position:Number(s.position)||0,name:s.name,adresse:s.adresse,uhrzeit:s.uhrzeit,dauer:s.dauer,besonderheit:s.besonderheit,insider_tipps:s.insider_tipps,ort_profil:!!s.ort_profil})),
         restaurants:t.restaurants.filter(r=>r.name).map(r=>({position:Number(r.position)||0,name:r.name,mahlzeit:r.mahlzeit,charakter:r.charakter,preis:r.preis,adresse:r.adresse,telefon:r.telefon,warum:r.warum})),
         aktivitaeten:t.aktivitaeten.filter(a=>a.name).map(a=>({position:Number(a.position)||0,name:a.name,anbieter:a.anbieter,adresse:a.adresse,telefon:a.telefon,insider_tipps:a.insider_tipps}))
-      }))
+        };
+      })
     };
     const quelltext=`ReiseOrt: ${trip.reise_ort}\nReiseTage: ${tage.length}\nFormat: ${trip.reise_format}\nCharakter: ${trip.reise_charakter}`;
     const taxonomienOut={
@@ -2874,7 +2897,8 @@ function App(){
     //     „kein Hotel" → KEINE Blockade (bewusste Abweichung vom Brief-Wortlaut „Pool leer → Blockade").
     const poolRefs=trip.hotels.filter(h=>h.name||h.hotel_id).map(h=>h.ref);
     if(poolRefs.length>0){
-      const dangling=tage.filter(t=>t.hotel_ref&&!poolRefs.includes(t.hotel_ref)).map(t=>t.tag_nummer);
+      // v0.26.0 (L-WW-132): Abreisetag prüft die abgeleitete Vornacht-Ref, nicht die eigene Auswahl.
+      const dangling=tage.filter((t,i)=>{const r=isAbreisetag(tage,i)?effHotelRef(tage,i):t.hotel_ref;return r&&!poolRefs.includes(r);}).map(t=>t.tag_nummer);
       if(dangling.length>0) missing.push('Hotel-Zuordnung ungültig an Tag '+dangling.join(', ')+' — verweist auf ein nicht (mehr) im Pool vorhandenes Hotel (Hotel-/Tage-Tab prüfen)');
     }
     // 4.4 region_land bleibt Pflicht (bereits oben geprüft).
@@ -3341,7 +3365,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.25.0 (L-WW-128 · Places-Picker-Warnhinweis)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.0 (L-WW-132 · Abreisetag Vornacht)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4007,7 +4031,18 @@ function App(){
               </div>
               <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
                 <Field label="Empf. Tagesstart" badge="EMPFOHLEN" half><TI placeholder="z.B. ca. 14:00" value={tag.tag_start} onChange={v=>updateTag(ti,'tag_start',v)}/></Field>
-                <Field label="Hotel für diese Nacht" badge="EMPFOHLEN" half><Sel options={trip.hotels.filter(h=>h.name).map(h=>({value:h.ref,label:`Hotel ${h.ref} — ${h.name}`}))} value={tag.hotel_ref} onChange={v=>updateTag(ti,'hotel_ref',v)}/></Field>
+                {isAbreisetag(tage,ti)?(()=>{
+                  // v0.26.0 (L-WW-132): Abreisetag — keine leere Auswahl, kein Hotel-Fallback A.
+                  const vRef=effHotelRef(tage,ti);
+                  const vHotel=trip.hotels.find(h=>h.ref===vRef&&h.name);
+                  const vLabel=vHotel?`Hotel ${vRef} — ${vHotel.name}`:'noch kein Hotel am Vortag';
+                  return <Field label="Unterkunft am Abreisetag" badge="EMPFOHLEN" half hint="Am Abreisetag gilt die Unterkunft der Vornacht.">
+                    <select style={{...iStyle,cursor:'pointer'}} value={tag.unterkunft_modus==='keine'?'keine':'vornacht'} onChange={e=>updateTag(ti,'unterkunft_modus',e.target.value)}>
+                      <option value="vornacht">{`Unterkunft der Vornacht (automatisch): ${vLabel}`}</option>
+                      <option value="keine">Keine Übernachtung</option>
+                    </select>
+                  </Field>;
+                })():<Field label="Hotel für diese Nacht" badge="EMPFOHLEN" half><Sel options={trip.hotels.filter(h=>h.name).map(h=>({value:h.ref,label:`Hotel ${h.ref} — ${h.name}`}))} value={tag.hotel_ref} onChange={v=>updateTag(ti,'hotel_ref',v)}/></Field>}
               </div>
 
               <InsiderField number={2} title="Deine Tages-Story & Tipps (F2)" hint="Was macht diesen Tag besonders? Highlights, Tipps, Hinweis für morgen..." placeholder="Stichworte zum Tag..." value={tag.tag_story} onChange={v=>updateTag(ti,'tag_story',v)} rows={4}/>
