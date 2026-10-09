@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.26.2 (Aufgabe 55 · Interview WF-INT)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.26.3 (Aufgabe 55 · Interview WF-INT v1.1)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -2723,7 +2723,7 @@ function App(){
     return 'Z';
   };
 
-  // ===================== v0.26.1/v0.26.2: WHISPERER-INTERVIEW (Brief e→b 2026-10-09, B1–B4) =====================
+  // ===================== v0.26.1–v0.26.3: WHISPERER-INTERVIEW (Brief e→b 2026-10-09, B1–B4) =====================
   // Nur admin/curator_master (canManage). v0.26.2: Kontrakt c (Antworten c→b 2026-10-09, WF-INT v1.0):
   // EIN Endpunkt POST <host>/webhook/ww-interview (Geschwister von reise-api-ww-v2, gleicher Header),
   // Feld `action`: erzeugen | sperren | erneuern | status | lesen | importieren (letzteres A1-γ, noch nicht gebaut).
@@ -2770,7 +2770,14 @@ function App(){
     entwurf_id:r.entwurf_id||'',
     status_runde1:r.status_runde1||'',
     token_status:r.token_status||'',
+    // v0.26.3 (WF-INT v1.1): token_effektiv = aktiv|gesperrt|abgelaufen — für die Anzeige maßgeblich.
+    token_effektiv:r.token_effektiv||r.token_status||'',
     token_gueltig_bis:r.token_gueltig_bis||'',
+    letzte_aktivitaet_at:r.letzte_aktivitaet_at||'',
+    vereinbarung_bestaetigt_at:r.vereinbarung_bestaetigt_at||'',
+    vereinbarung_version:r.vereinbarung_version||'',
+    abgeschlossen_at:r.abgeschlossen_at||'',
+    importiert_at:r.importiert_at||'',
     whisperer_name:r.whisperer_name||'',
     whisperer_email:r.whisperer_email||'',
     modus:r.modus||''
@@ -2787,15 +2794,15 @@ function App(){
     }
     if(aktion==='erzeugen'){
       if(st&&st.interview_id) return {ok:false,error:'interview_existiert',interview_id:st.interview_id};
-      const n={interview_id:'INT-MOCK-'+Date.now(),status_runde1:'offen',token_status:'aktiv',token_gueltig_bis:plus60(),whisperer_name:body.whisperer_name,whisperer_email:body.whisperer_email,modus:body.modus};
+      const n={interview_id:'INT-MOCK-'+Date.now(),status_runde1:'offen',token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60(),whisperer_name:body.whisperer_name,whisperer_email:body.whisperer_email,modus:body.modus};
       ivMockStore.current[entwurfId]=n;
       return {ok:true,...n,url:fakeUrl()};
     }
     if(!st) return {ok:false,error:'Kein Link vorhanden.'};
-    if(aktion==='sperren'){const n={...st,token_status:'gesperrt'};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
+    if(aktion==='sperren'){if(st.token_status==='gesperrt')return {ok:true,...st,unveraendert:true};const n={...st,token_status:'gesperrt',token_effektiv:'gesperrt'};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
     if(aktion==='erneuern'){
       if(st.token_status==='gesperrt'&&!body.neues_token) return {ok:false,error:'token_gesperrt',hinweis:'Gesperrter Link nur mit neuem Token nutzbar.'};
-      const n={...st,token_status:'aktiv',token_gueltig_bis:plus60()};ivMockStore.current[entwurfId]=n;
+      const n={...st,token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60()};ivMockStore.current[entwurfId]=n;
       return body.neues_token?{ok:true,...n,url:fakeUrl()}:{ok:true,...n};
     }
     if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
@@ -2866,7 +2873,7 @@ function App(){
       if(r.url&&(aktion==='erzeugen'||aktion==='erneuern')) setIvUrl(r.url);
       if(aktion==='erzeugen') setIvMsg({kind:'ok',text:'Link erzeugt. Die URL wird nur jetzt angezeigt — bitte kopieren.'});
       else if(aktion==='erneuern') setIvMsg({kind:'ok',text:extra.neues_token?'Neuer Link erzeugt — die bisherige URL ist ungültig. Neue URL nur jetzt sichtbar.':'Laufzeit verlängert. Die bisherige URL bleibt gültig.'});
-      else if(aktion==='sperren') setIvMsg({kind:'ok',text:'Link gesperrt.'});
+      else if(aktion==='sperren') setIvMsg({kind:r.unveraendert?'info':'ok',text:r.unveraendert?'Link war bereits gesperrt.':'Link gesperrt.'});
     }catch(e){
       if(aktion==='status'&&(e.status===404||e.code==='nicht_gefunden')){setIvInfo(null);}
       else if(aktion==='erzeugen'&&e.code==='interview_existiert'){
@@ -3764,7 +3771,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.2 (Aufgabe 55 · Interview WF-INT)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.3 (Aufgabe 55 · Interview WF-INT v1.1)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4627,8 +4634,10 @@ function App(){
             <div style={head}>1 · Interview-Link</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:16,fontSize:13,marginBottom:12}}>
               <div><span style={{color:'#888'}}>Runde 1:</span> <strong>{R1[info.status_runde1]||info.status_runde1||'—'}</strong></div>
-              <div><span style={{color:'#888'}}>Link:</span> <strong style={{color:info.token_status==='aktiv'?'var(--sage-dark)':info.token_status?'var(--red)':'inherit'}}>{TK[info.token_status]||info.token_status||'keiner'}</strong></div>
+              <div><span style={{color:'#888'}}>Link:</span> <strong style={{color:info.token_effektiv==='aktiv'?'var(--sage-dark)':info.token_effektiv?'var(--red)':'inherit'}}>{TK[info.token_effektiv]||info.token_effektiv||'keiner'}</strong></div>
               <div><span style={{color:'#888'}}>gültig bis:</span> <strong>{info.token_gueltig_bis?fmtTs(info.token_gueltig_bis):'—'}</strong></div>
+              {hasLink&&<div><span style={{color:'#888'}}>letzte Aktivität:</span> <strong>{fmtTs(info.letzte_aktivitaet_at)}</strong></div>}
+              {hasLink&&<div><span style={{color:'#888'}}>Vereinbarung:</span> <strong>{info.vereinbarung_bestaetigt_at?('bestätigt '+fmtTs(info.vereinbarung_bestaetigt_at)+(info.vereinbarung_version?' ('+info.vereinbarung_version+')':'')):'noch nicht bestätigt'}</strong></div>}
               {hasLink&&<div><span style={{color:'#888'}}>Whisperer:</span> <strong>{info.whisperer_name||'—'}</strong> {info.whisperer_email&&<span style={{color:'#888'}}>({info.whisperer_email})</span>} · Modus {info.modus||'—'}</div>}
             </div>
             {!hasLink&&<div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
@@ -4638,8 +4647,8 @@ function App(){
             </div>}
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               {!hasLink&&<button type="button" disabled={busy||noDraft} onClick={()=>ivLinkAction('erzeugen')} style={btn(true,busy||noDraft)}>{ivBusy==='erzeugen'?'Erzeuge…':'Link erzeugen'}</button>}
-              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_status==='gesperrt'} onClick={()=>ivLinkAction('sperren')} style={btn(false,busy||noDraft||info.token_status==='gesperrt')}>{ivBusy==='sperren'?'Sperre…':'Link sperren'}</button>}
-              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_status==='gesperrt'} title={info.token_status==='gesperrt'?'Gesperrter Link: nur „Neuen Link erzeugen“':'Gleiche URL, +60 Tage'} onClick={()=>ivLinkAction('erneuern')} style={btn(false,busy||noDraft||info.token_status==='gesperrt')}>{ivBusy==='erneuern'?'Verlängere…':'Laufzeit verlängern'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} onClick={()=>ivLinkAction('sperren')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='sperren'?'Sperre…':'Link sperren'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} title={info.token_effektiv==='gesperrt'?'Gesperrter Link: nur „Neuen Link erzeugen“':'Gleiche URL, +60 Tage'} onClick={()=>ivLinkAction('erneuern')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='erneuern'?'Verlängere…':'Laufzeit verlängern'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft} title="Neue URL; die bisherige ist danach ungültig" onClick={()=>ivLinkAction('erneuern',{neues_token:true})} style={btn(false,busy||noDraft)}>Neuen Link erzeugen</button>}
               <button type="button" disabled={busy||noDraft} onClick={()=>{ivLinkAction('status');ivLoadRead();}} style={btn(false,busy||noDraft)}>Status aktualisieren</button>
               {ivMock&&hasLink&&<select value={info.status_runde1||''} onChange={e=>ivLinkAction('mock_status',{status_runde1:e.target.value})} style={{...iStyle,width:'auto',fontSize:12,background:'var(--yellow)'}} title="Nur Mock: Runde-1-Status simulieren">
