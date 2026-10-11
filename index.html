@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.27.0 (Aufgabe 55 · Testlauf-A1-Befunde)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.27.1 (Aufgabe 55 · e-D208 dauer frei)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -304,7 +304,14 @@ function TA({placeholder,rows=3,value,onChange}){return <textarea style={{...iSt
 // Sel/MC/Radio: opts kann Array von Strings ODER Array von {value,label} sein.
 const optV=o=>o&&typeof o==='object'?o.value:o;
 const optL=o=>o&&typeof o==='object'?o.label:o;
-function Sel({options,placeholder,value,onChange}){return <select style={{...iStyle,cursor:'pointer'}} value={value||''} onChange={e=>onChange(e.target.value)}><option value="">{placeholder||'Bitte wählen...'}</option>{(options||[]).map(o=><option key={optV(o)} value={optV(o)}>{optL(o)}</option>)}</select>;}
+// v0.27.1 (e-D208, NOTIZ e→b 2.1): freePrefix gesetzt → ein Wert, der nicht in der Liste steht (z. B. `dauer`
+// aus dem Interview-Import), erscheint als zusätzliche, markierte Option und bleibt erhalten, bis ersetzt.
+function Sel({options,placeholder,value,onChange,freePrefix}){
+  const opts=options||[];
+  const v=value||'';
+  const frei=!!freePrefix&&v!==''&&!opts.some(o=>String(optV(o))===String(v));
+  return <select style={{...iStyle,cursor:'pointer',...(frei?{borderColor:'var(--coral)',background:'#FFF7F3'}:{})}} value={v} onChange={e=>onChange(e.target.value)} title={frei?freePrefix+v+' — behalten oder aus der Liste ersetzen':undefined}><option value="">{placeholder||'Bitte wählen...'}</option>{frei&&<option value={v}>{freePrefix+v}</option>}{opts.map(o=><option key={optV(o)} value={optV(o)}>{optL(o)}</option>)}</select>;
+}
 function MC({options,value=[],onChange,columns=2}){
   // v0.14.7: Optionen können {value,label,disabled,title?} sein, analog zu Radio.
   // Disabled-Optionen sind ausgegraut, nicht klickbar und zeigen optional einen Tooltip.
@@ -3927,7 +3934,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.0 (Aufgabe 55 · Testlauf-A1-Befunde)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.1 (Aufgabe 55 · e-D208 dauer frei)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4678,7 +4685,7 @@ function App(){
                       <Field label="Adresse/Maps" badge="EMPFOHLEN"><TI placeholder="Adresse oder Maps-Link" value={s.adresse} onChange={v=>updateStopp(ti,si,'adresse',v)}/></Field>
                       <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
                         <Field label="Uhrzeit" badge="OPTIONAL" half><TI placeholder="z.B. 09:00" value={s.uhrzeit} onChange={v=>updateStopp(ti,si,'uhrzeit',v)}/></Field>
-                        <Field label="Dauer" badge="OPTIONAL" half><Sel options={['30 min','1 Stunde','2 Stunden','3 Stunden','Halber Tag','Ganzer Tag']} value={s.dauer} onChange={v=>updateStopp(ti,si,'dauer',v)}/></Field>
+                        <Field label="Dauer" badge="OPTIONAL" half><Sel freePrefix="aus Interview: " options={['30 min','1 Stunde','2 Stunden','3 Stunden','Halber Tag','Ganzer Tag']} value={s.dauer} onChange={v=>updateStopp(ti,si,'dauer',v)}/></Field>
                       </div>
                       <Field label="Insider-Tipps (F3)" badge="EMPFOHLEN" hint="Parkplatz, Laufroute, Historie..."><TA placeholder="Stichworte..." rows={2} value={s.insider_tipps} onChange={v=>updateStopp(ti,si,'insider_tipps',v)}/></Field>
                       {/* v0.27.0 (Befund 5 / F1): Feld war gespeichert und im PDF genutzt, aber nicht sichtbar. */}
