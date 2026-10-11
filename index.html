@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.27.1 (Aufgabe 55 · e-D208 dauer frei)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.27.2 (Aufgabe 55 · e-D208 dauer frei, Aktivitäten)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -3307,7 +3307,7 @@ function App(){
         // v0.19.2 (S-2): ort_profil additiv in der Stopp-Allowlist — Default false, nur explizit true zählt (WF10-Anker).
         stopps:t.stopps.filter(s=>s.name).map(s=>({position:Number(s.position)||0,name:s.name,adresse:s.adresse,uhrzeit:s.uhrzeit,dauer:s.dauer,besonderheit:s.besonderheit,insider_tipps:s.insider_tipps,ort_profil:!!s.ort_profil})),
         restaurants:t.restaurants.filter(r=>r.name).map(r=>({position:Number(r.position)||0,name:r.name,mahlzeit:r.mahlzeit,charakter:r.charakter,preis:r.preis,adresse:r.adresse,telefon:r.telefon,warum:r.warum})),
-        aktivitaeten:t.aktivitaeten.filter(a=>a.name).map(a=>({position:Number(a.position)||0,name:a.name,anbieter:a.anbieter,adresse:a.adresse,telefon:a.telefon,insider_tipps:a.insider_tipps}))
+        aktivitaeten:t.aktivitaeten.filter(a=>a.name).map(a=>({position:Number(a.position)||0,name:a.name,anbieter:a.anbieter,adresse:a.adresse,telefon:a.telefon,insider_tipps:a.insider_tipps,...(a.dauer?{dauer:a.dauer}:{})}))
         };
       })
     };
@@ -3934,7 +3934,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.1 (Aufgabe 55 · e-D208 dauer frei)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.2 (Aufgabe 55 · e-D208 dauer frei, Aktivitäten)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4749,6 +4749,8 @@ function App(){
                       <Field label="Telefon" badge="OPTIONAL" half><TI placeholder="+34 ..." value={a.telefon} onChange={v=>updateAkt(ti,ai,'telefon',v)}/></Field>
                     </div>
                     <Field label="Adresse" badge="OPTIONAL"><TI placeholder="Adresse oder Maps-Link" value={a.adresse} onChange={v=>updateAkt(ti,ai,'adresse',v)}/></Field>
+                    {/* v0.27.2 (e-D208 2.1, Entscheid Steffen 1a): Dauer auch bei Aktivitäten, freie Werte aus dem Interview als markierte Option. */}
+                    <Field label="Dauer" badge="OPTIONAL" half><Sel freePrefix="aus Interview: " options={['30 min','1 Stunde','2 Stunden','3 Stunden','Halber Tag','Ganzer Tag']} value={a.dauer} onChange={v=>updateAkt(ti,ai,'dauer',v)}/></Field>
                     <Field label="Insider-Tipps (F5)" badge="EMPFOHLEN"><TA placeholder="Wetterabhängig? Buchung nötig? Worauf achten?" rows={2} value={a.insider_tipps} onChange={v=>updateAkt(ti,ai,'insider_tipps',v)}/></Field>
                   </SubItemRow>;
                 });
