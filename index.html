@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.26.5 (Aufgabe 55 · Import-Timeout, Gb)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.27.0 (Aufgabe 55 · Testlauf-A1-Befunde)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -234,6 +234,59 @@ function InfoI({feldKey,fallback}){
     </>}
   </span>;
 }
+// v0.27.0 (Testlauf A1, Befund 3 / C1): Interview-Daten lesbar statt JSON.
+// ivParse: JSON-String → Objekt/Array, sonst Wert unverändert.
+function ivParse(v){
+  if(typeof v!=='string') return v;
+  const t=v.trim();
+  if(/^[\[{]/.test(t)){try{return JSON.parse(t);}catch{}}
+  return v;
+}
+// ivFmtItem: ein Eintrag (offener Punkt, Kontrollpunkt, Warnung) als Text. {bezug,text} → „Tag 2 — Text“.
+function ivFmtItem(x){
+  x=ivParse(x);
+  if(x===null||x===undefined) return '';
+  if(typeof x==='string') return x;
+  if(Array.isArray(x)) return x.map(ivFmtItem).filter(Boolean).join('\n');
+  if(typeof x==='object'){
+    if(x.text!==undefined||x.bezug!==undefined){
+      const b=String(x.bezug||'').trim();
+      return (b?b.charAt(0).toUpperCase()+b.slice(1)+' — ':'')+String(x.text||'');
+    }
+    return Object.keys(x).map(k=>ivKeyLabel(k)+': '+ivFmtVal(x[k])).join(' · ');
+  }
+  return String(x);
+}
+const IV_KEY_LABEL={materialgrundlage:'Materialgrundlage',beschreibung:'Beschreibung',ohne_einzelbestaetigung:'Ohne Einzelbestätigung',gestrichen:'Gestrichen',stichworte:'Stichworte',belege:'Belege'};
+function ivKeyLabel(k){if(IV_KEY_LABEL[k])return IV_KEY_LABEL[k];const t=String(k).replace(/_/g,' ');return t.charAt(0).toUpperCase()+t.slice(1);}
+function ivFmtVal(v){
+  if(v===null||v===undefined||v==='') return '—';
+  if(Array.isArray(v)) return v.length?v.map(x=>typeof x==='string'?x:ivFmtItem(x)).join(', '):'—';
+  if(typeof v==='object') return ivFmtItem(v);
+  return String(v);
+}
+// Inline: nur **fett**; kein HTML-Einbau.
+function ivMdInline(t){
+  const parts=String(t).split(/\*\*(.+?)\*\*/g);
+  return parts.map((x,i)=>i%2?<strong key={i}>{x}</strong>:x);
+}
+// Minimal-Markdown für die Lesefassung: Überschriften (#), Aufzählungen (- * •), **fett**, Leerzeilen.
+function IvMarkdown({text}){
+  const lines=String(text||'').replace(/\r\n/g,'\n').split('\n');
+  const out=[];let list=null;
+  const flush=()=>{if(list){out.push(<ul key={'u'+out.length} style={{margin:'2px 0 6px 18px',padding:0}}>{list}</ul>);list=null;}};
+  lines.forEach((ln,i)=>{
+    const h=ln.match(/^\s*#{1,6}\s+(.*)$/);
+    const li=ln.match(/^\s*[-*•]\s+(.*)$/);
+    if(li){(list=list||[]).push(<li key={i}>{ivMdInline(li[1])}</li>);return;}
+    flush();
+    if(h){out.push(<div key={i} style={{fontWeight:700,margin:'8px 0 2px'}}>{ivMdInline(h[1])}</div>);return;}
+    if(!ln.trim()){out.push(<div key={i} style={{height:6}}/>);return;}
+    out.push(<div key={i}>{ivMdInline(ln)}</div>);
+  });
+  flush();
+  return <div>{out}</div>;
+}
 // v0.26.1 (Brief e→b 2026-10-09 B2.4): Markierung „Vorschlag aus Interview“. Begründung als Tooltip,
 // ✓ bestätigt (entfernt die Markierung). Ändern des Feldes entfernt sie ebenfalls (setT/updateTag in App).
 function ImpMark({mark}){
@@ -245,7 +298,7 @@ function ImpMark({mark}){
 }
 function Field({label,badge,hint,children,half,info,mark}){return <div className={half?'field-half':''} style={{marginBottom:16,flex:half?'1 1 calc(50% - 8px)':'1 1 100%',minWidth:half?200:'auto',...(mark?{outline:'2px dashed var(--coral-light)',outlineOffset:4,borderRadius:4}:{})}}><div style={{marginBottom:4,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4}}><label style={{fontSize:13,fontWeight:600}}>{label}</label>{badge&&<Badge type={badge}/>}{info&&<InfoI feldKey={info}/>}<ImpMark mark={mark}/></div>{hint&&<div style={{fontSize:11,color:'#888',marginBottom:4}}>{hint}</div>}{children}</div>;}
 
-function TI({placeholder,value,onChange}){return <input style={iStyle} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
+function TI({placeholder,value,onChange,name,autoComplete}){return <input style={iStyle} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)} name={name} autoComplete={autoComplete}/>;}
 function TA({placeholder,rows=3,value,onChange}){return <textarea style={{...iStyle,resize:'vertical'}} rows={rows} placeholder={placeholder} value={value||''} onChange={e=>onChange(e.target.value)}/>;}
 
 // Sel/MC/Radio: opts kann Array von Strings ODER Array von {value,label} sein.
@@ -2164,6 +2217,7 @@ function App(){
   const hydrateFromDraft=useCallback((d)=>{
     // v0.26.1: Interview-Import-Zustand gehört zum vorher offenen Entwurf → verwerfen.
     setMarks({});setImportResult(null);setImportChecks({});
+    setPendingImport(null);setImportUnsaved(false);setTitelVorschlag('');
     setEntwurfId(d.entwurf_id);
     // v0.19.4 (B-2): geladener Entwurf existiert im Backend → alle folgenden Saves sind Updates.
     setDraftPersisted(true);
@@ -2754,6 +2808,14 @@ function App(){
   const[ivLoadedFor,setIvLoadedFor]=useState('');
   const[importResult,setImportResult]=useState(null);   // {kontrollpunkte,offene_punkte,warnungen,hinweise,interview_id}
   const[importChecks,setImportChecks]=useState({});     // lokal abhakbar, keine Persistenz (A1)
+  // v0.27.0 (Befund 1 / A1): Bestätigung als In-Page-Dialog statt confirm(). {r,built} bis zur Entscheidung.
+  const[pendingImport,setPendingImport]=useState(null);
+  // v0.27.0 (Befund 2 / B1): übernommene, noch nicht gespeicherte Interview-Daten → beforeunload-Warnung.
+  const[importUnsaved,setImportUnsaved]=useState(false);
+  // v0.27.0 (B1): letzte Import-Antwort je entwurf_id in localStorage → „Letzten Import wiederherstellen“.
+  const[ivCacheAvail,setIvCacheAvail]=useState(null);
+  // v0.27.0 (Befund 4 / D1): Titel aus Interview nur als Vorschlag, wenn das Feld bereits gefüllt ist.
+  const[titelVorschlag,setTitelVorschlag]=useState('');
   const ivMockStore=useRef({});                   // Mock-Zustand je entwurf_id
 
   // Fehler mit HTTP-Status, Code und Hinweis (c: error ab v1.1, heute fehler).
@@ -2945,9 +3007,18 @@ function App(){
     return {key:head,sub:p!==head?p:''};
   };
   const IV_LABEL={reise_ort:'Titel / Destination',tage:'Tagesplanung',reise_format:'Reise-Format',reise_thema:'Reise-Thema',zielgruppe:'Zielgruppe',reise_charakter:'Reise-Art',empfohlene_monate:'Empfohlene Reisemonate',mietwagen:'Mietwagen',flughafen_empfehlung:'Empfohlene Flughäfen',hotels:'Hotels',freitext_gesamtreise:'Insider-Wissen zur Gesamtreise',aktivitaets_level:'Aktivitäts-Level',anreise:'Anreise',persoenliche_erfahrung:'Persönliche Erfahrung',mit_kindern:'Mit Kindern',magic_moment:'Magic Moment',sicherheitshinweise:'Sicherheitshinweise',match:'Stil-Faktoren',emo_tonalitaet:'Tonalität',emo_international:'International',emo_persoenlichkeitsfit:'Eignet sich besonders für',trust_signale:'Beratungsgespräch'};
+  // v0.27.0 (Befund 8): Regler-Labels statt interner Schlüssel.
+  const MATCH_LABEL={pre_curation:'Planungsintensität',pace:'Programmdichte',solitude_social:'Allein vs. Gesellschaft',comfort:'Komfort-Niveau',cultural_depth:'Kulturelle Tiefe',activity_mode:'Entspannt vs. Aktiv',authenticity:'Insider-Tiefe'};
   const ivLabelFor=k=>{
     const [h,sub]=k.split('.');
+    if(h==='match'&&sub) return 'Stil-Faktor · '+(MATCH_LABEL[sub]||sub);
     return (IV_LABEL[h]||h)+(sub?' · '+sub:'');
+  };
+  // Liste „Offen (Reise-Eingabe)“: Stil-Faktoren einmal gruppiert.
+  const ivOpenList=keys=>{
+    const mm=keys.filter(k=>k.startsWith('match.')).map(k=>MATCH_LABEL[k.slice(6)]||k.slice(6));
+    const rest=keys.filter(k=>!k.startsWith('match.')&&!(k==='match'&&mm.length)).map(ivLabelFor);
+    return [...rest,...(mm.length?['Stil-Faktoren: '+mm.join(', ')]:[])];
   };
   const ivIsFilled=v=>{
     if(v===null||v===undefined) return false;
@@ -2965,7 +3036,14 @@ function App(){
     const pj=v2=>{if(typeof v2==='string'){try{return JSON.parse(v2);}catch{return null;}}return v2;};
     const patch={};const hinweise=[];
     const params=has(f,'params_json')?(pj(f.params_json)||{}):null;
-    if(params&&params.reise_ort!==undefined) patch.reise_ort=params.reise_ort||'';
+    // v0.27.0 (Befund 4 / D1): Titel nur füllen, wenn leer; sonst Vorschlag (Übernehmen am Feld).
+    let titelNeu='';
+    if(params&&params.reise_ort!==undefined){
+      const ivOrt=String(params.reise_ort||'').trim();
+      const cur=String(trip.reise_ort||'').trim();
+      if(!cur) patch.reise_ort=ivOrt;
+      else if(ivOrt&&ivOrt!==cur) titelNeu=ivOrt;
+    }
     const tp=pj(f.taxonomien_patch)||{};
     const pick=(direct,tpKey,formKey,arr)=>{
       const norm=x=>arr?(Array.isArray(x)?x:(x?[x]:[])):(x||'');
@@ -3001,7 +3079,7 @@ function App(){
     // Formularwert bleibt, keine Markierung. null/undefined/'' wird wie fehlend behandelt.
     const hv=k=>has(v,k)&&v[k]!==null&&v[k]!==undefined&&v[k]!=='';
     const mdj=hv('match_dimensions_json')?pj(v.match_dimensions_json):null;
-    if(mdj&&typeof mdj==='object'&&Object.keys(mdj).some(k=>mdj[k]!==null&&mdj[k]!==undefined&&mdj[k]!=='')){patch.match={...trip.match};Object.keys(mdj).forEach(k=>{if(mdj[k]===null||mdj[k]===undefined||mdj[k]==='')return;const n=Number(mdj[k]);if(n>=1&&n<=5){patch.match[k]=n;vMarks['match.'+k]=true;}else hinweise.push(`Stil-Faktor ${k}: ungültiger Wert ${JSON.stringify(mdj[k])} ignoriert.`);});}
+    if(mdj&&typeof mdj==='object'&&Object.keys(mdj).some(k=>mdj[k]!==null&&mdj[k]!==undefined&&mdj[k]!=='')){patch.match={...trip.match};Object.keys(mdj).forEach(k=>{if(mdj[k]===null||mdj[k]===undefined||mdj[k]==='')return;const n=Number(mdj[k]);if(n>=1&&n<=5){patch.match[k]=n;vMarks['match.'+k]=true;}else hinweise.push(`Stil-Faktor ${MATCH_LABEL[k]||k}: ungültiger Wert ${JSON.stringify(mdj[k])} ignoriert.`);});}
     if(hv('emo_tonalitaet')){const n=Number(v.emo_tonalitaet);if(n>=1&&n<=5){patch.emo_tonalitaet=n;vMarks.emo_tonalitaet=true;}else hinweise.push('Tonalität: ungültiger Wert ignoriert.');}
     if(hv('emo_international')){patch.emo_international=v.emo_international===true||v.emo_international==='true'||v.emo_international===1;vMarks.emo_international=true;}
     if(hv('emo_persoenlichkeitsfit')){const a=Array.isArray(v.emo_persoenlichkeitsfit)?v.emo_persoenlichkeitsfit:[];const ok=VOC_PERSOENLICHKEITSFIT.map(o=>o.value);const bad=a.filter(x=>!ok.includes(x));if(bad.length)hinweise.push('Eignet sich besonders für: unbekannte Werte ignoriert ('+bad.join(', ')+').');patch.emo_persoenlichkeitsfit=a.filter(x=>ok.includes(x)).slice(0,3);vMarks.emo_persoenlichkeitsfit=true;}
@@ -3022,10 +3100,10 @@ function App(){
       if(ivIsFilled(trip[k])) betroffen.push(ivLabelFor(k));
     });
     if(newTage&&tage.some(ivTagHasContent)) betroffen.push(ivLabelFor('tage')+' (alle Tage)');
-    return {patch,newTage,vMarks,hinweise,betroffen};
+    return {patch,newTage,vMarks,hinweise,betroffen,titelNeu};
   };
   const ivApply=(r,built)=>{
-    const {patch,newTage,vMarks,hinweise}=built;
+    const {patch,newTage,vMarks,hinweise,titelNeu}=built;
     const topMarks={};const tagMarks={};const ohneAnzeige=[];
     Object.keys(vMarks).forEach(k=>{topMarks[k]='Vorschlag aus Interview';});
     (Array.isArray(r.markierung)?r.markierung:[]).forEach(m=>{
@@ -3049,6 +3127,8 @@ function App(){
       setOpenItem(first0?{0:{type:first0.type,idx:first0.idx}}:{});
       setOpenTags(o=>{const n={...o};Object.keys(tagMarks).forEach(i=>{n[i]=true;});return n;});
     }
+    if(titelNeu){topMarks.reise_ort='Interview schlägt „'+titelNeu+'“ vor — Titel bleibt, bis du übernimmst';}
+    setTitelVorschlag(titelNeu||'');
     setMarks(topMarks);
     setImportResult({
       interview_id:r.interview_id||'',
@@ -3063,25 +3143,71 @@ function App(){
     const sec={reise_ort:'basis',anreise:'basis',empfohlene_monate:'basis',mietwagen:'logistik',flughafen_empfehlung:'logistik',hotels:'logistik',freitext_gesamtreise:'logistik',reise_format:'taxonomie',reise_thema:'taxonomie',reise_charakter:'taxonomie',zielgruppe:'taxonomie',aktivitaets_level:'taxonomie',mit_kindern:'taxonomie',match:'match',trust_signale:'match',emo_tonalitaet:'match',emo_international:'match',emo_persoenlichkeitsfit:'match',persoenliche_erfahrung:'persoenlich',magic_moment:'persoenlich',sicherheitshinweise:'persoenlich'};
     setOpenSections(o=>{const n={...o};Object.keys(topMarks).forEach(k=>{const s2=sec[k.split('.')[0]];if(s2)n[s2]=true;});return n;});
   };
+  // v0.27.0 (B1): Zwischenspeicher der letzten Import-Antwort je Entwurf (nur Komfort, 7 Tage).
+  const IV_CACHE_PREFIX='ww_iv_import_';
+  const ivCacheSave=(id,r)=>{try{localStorage.setItem(IV_CACHE_PREFIX+id,JSON.stringify({at:new Date().toISOString(),r}));}catch{}};
+  const ivCacheLoad=id=>{
+    try{
+      const x=JSON.parse(localStorage.getItem(IV_CACHE_PREFIX+id)||'null');
+      if(!x||!x.r) return null;
+      if(Date.now()-new Date(x.at).getTime()>7*864e5){localStorage.removeItem(IV_CACHE_PREFIX+id);return null;}
+      return x;
+    }catch{return null;}
+  };
+  const ivCacheClear=id=>{try{localStorage.removeItem(IV_CACHE_PREFIX+id);}catch{}};
+  useEffect(()=>{setIvCacheAvail(entwurfId&&draftPersisted?ivCacheLoad(entwurfId):null);
+  // eslint-disable-next-line
+  },[entwurfId,draftPersisted]);
+  // v0.27.0 (B1): Warnung beim Neuladen/Schließen, solange Import-Daten offen oder ungespeichert sind.
+  useEffect(()=>{
+    if(!importUnsaved&&!pendingImport) return;
+    const h=e=>{e.preventDefault();e.returnValue='';return '';};
+    window.addEventListener('beforeunload',h);
+    return ()=>window.removeEventListener('beforeunload',h);
+  },[importUnsaved,pendingImport]);
+  const ivDoApply=(r,built)=>{
+    ivApply(r,built);
+    setImportUnsaved(true);
+    setIvMsg({kind:'ok',text:'Interview-Daten ins Formular übernommen (noch nicht gespeichert). Markierte Felder prüfen, dann „💾 Speichern“.'});
+  };
+  // Baut den Patch gegen den aktuellen Formularstand; bei befüllten Feldern erst Dialog.
+  const ivOfferImport=(r)=>{
+    const built=ivBuildPatch(r);
+    if(built.betroffen.length) setPendingImport({r,built}); else ivDoApply(r,built);
+  };
+  const ivDecideImport=(ok)=>{
+    const p=pendingImport;setPendingImport(null);
+    if(!p) return;
+    if(ok){ivDoApply(p.r,p.built);}
+    else{ivCacheClear(entwurfId);setIvCacheAvail(null);setIvMsg({kind:'info',text:'Import abgebrochen — Formular unverändert.'});}
+  };
+  const ivCanEdit=()=>{
+    if(!entwurfId||!draftPersisted){setIvMsg({kind:'err',text:'Bitte den Entwurf zuerst speichern.'});return false;}
+    if(!isEditableStatus(tripStatus)&&!correctionMode){setIvMsg({kind:'err',text:'Entwurf ist nicht editierbar (Status '+(STATUS_LABELS[tripStatus]||tripStatus)+').'});return false;}
+    return true;
+  };
   const handleImport=async()=>{
     if(!canManage) return;
-    if(!entwurfId||!draftPersisted){setIvMsg({kind:'err',text:'Bitte den Entwurf zuerst speichern.'});return;}
-    if(!isEditableStatus(tripStatus)&&!correctionMode){setIvMsg({kind:'err',text:'Entwurf ist nicht editierbar (Status '+(STATUS_LABELS[tripStatus]||tripStatus)+').'});return;}
+    if(!ivCanEdit()) return;
     setIvBusy('import');setIvMsg(null);
     try{
       const r=await ivRun('importieren',{entwurf_id:entwurfId});
       if(r.entwurf_id&&r.entwurf_id!==entwurfId) throw new Error('Import-Antwort gehört zu einem anderen Entwurf ('+r.entwurf_id+').');
-      const built=ivBuildPatch(r);
-      if(built.betroffen.length&&!confirm('Formular wird mit den Interview-Daten überschrieben.\n\nBetrifft: '+built.betroffen.join(', ')+'\n\nAndere Felder bleiben unverändert. Gespeichert wird erst mit „💾 Speichern“.')){
-        setIvMsg({kind:'info',text:'Import abgebrochen — Formular unverändert.'});
-      }else{
-        ivApply(r,built);
-        setIvMsg({kind:'ok',text:'Interview-Daten ins Formular übernommen (noch nicht gespeichert). Markierte Felder prüfen, dann „💾 Speichern“.'});
-      }
-      // Status nachladen (c setzt importiert)
+      ivCacheSave(entwurfId,r);setIvCacheAvail(ivCacheLoad(entwurfId));
+      ivOfferImport(r);
+      // Status nachladen (c setzt importiert); v0.27.0 (Befund 9): auch Abschnitt 3 (importiert_at).
       try{const s2=await ivRun('status',{entwurf_id:entwurfId});setIvInfo(ivPickInfo(s2));}catch{}
+      try{setIvRead(await ivRun('lesen',{entwurf_id:entwurfId}));}catch{}
     }catch(e){setIvMsg({kind:'err',text:'Import fehlgeschlagen: '+e.message});}
     setIvBusy('');
+  };
+  // v0.27.0 (B1): zwischengespeicherte Antwort erneut anbieten (ohne neuen WF-INT-IMPORT-Lauf).
+  const handleImportRestore=()=>{
+    if(!canManage||!ivCanEdit()) return;
+    const x=ivCacheLoad(entwurfId);
+    if(!x){setIvCacheAvail(null);setIvMsg({kind:'err',text:'Kein zwischengespeicherter Import vorhanden.'});return;}
+    setIvMsg({kind:'info',text:'Zwischengespeicherter Import vom '+new Date(x.at).toLocaleString('de-DE')+' wird angeboten.'});
+    ivOfferImport(x.r);
   };
   // Markierungen: Zugriff, Bestätigen, Zählen
   const mk=(key)=>marks[key]?{grund:marks[key],onOk:()=>setMarks(m=>{const n={...m};delete n[key];return n;})}:null;
@@ -3098,7 +3224,7 @@ function App(){
     if(!canManage||!importResult) return null;
     const grp=(title,arr,keyP,color)=>arr.length?<div style={{marginBottom:8}}>
       <div style={{fontSize:12,fontWeight:700,color,marginBottom:4}}>{title} ({arr.length})</div>
-      {arr.map((x,i)=>{const k=keyP+i;const txt=typeof x==='string'?x:JSON.stringify(x);return <label key={k} style={{display:'flex',gap:8,alignItems:'flex-start',fontSize:12,padding:'2px 0',cursor:'pointer',textDecoration:importChecks[k]?'line-through':'none',color:importChecks[k]?'#999':'var(--anthrazit)'}}>
+      {arr.map((x,i)=>{const k=keyP+i;const txt=ivFmtItem(x);return <label key={k} style={{display:'flex',gap:8,alignItems:'flex-start',fontSize:12,padding:'2px 0',cursor:'pointer',textDecoration:importChecks[k]?'line-through':'none',color:importChecks[k]?'#999':'var(--anthrazit)'}}>
         <input type="checkbox" checked={!!importChecks[k]} onChange={e=>setImportChecks(c=>({...c,[k]:e.target.checked}))} style={{marginTop:2}}/>
         <span>{txt}</span></label>;})}
     </div>:null;
@@ -3113,7 +3239,7 @@ function App(){
       {grp('Offene Punkte',importResult.offene_punkte,'o','#8A6D00')}
       {grp('Warnungen',importResult.warnungen,'w','var(--red)')}
       {importResult.hinweise.length>0&&<div style={{fontSize:11,color:'#777',marginTop:6}}><strong>Hinweise Curator:</strong><ul style={{margin:'2px 0 0 18px'}}>{importResult.hinweise.map((h,i)=><li key={i}>{h}</li>)}</ul></div>}
-      {topOpen.length>0&&<div style={{fontSize:11,color:'#777',marginTop:6}}><strong>Offen (Reise-Eingabe):</strong> {topOpen.map(k=>ivLabelFor(k)).join(' · ')}</div>}
+      {topOpen.length>0&&<div style={{fontSize:11,color:'#777',marginTop:6}}><strong>Offen (Reise-Eingabe):</strong> {ivOpenList(topOpen).join(' · ')}</div>}
     </div>;
   };
   const renderTagDeepMarks=(ti)=>{
@@ -3258,6 +3384,8 @@ function App(){
       else{
         setSaveStatus('success');
         setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
+        // v0.27.0 (B1): übernommene Interview-Daten sind gespeichert → Warnung und Zwischenspeicher weg.
+        if(importUnsaved){setImportUnsaved(false);ivCacheClear(entwurfId);setIvCacheAvail(null);}
         // v0.26.1 (B2.4): offene Interview-Markierungen nur als Hinweis zählen (keine Sperre).
         setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId+(openMarkCount>0?` — Hinweis: ${openMarkCount} Vorschläge aus Interview noch nicht bestätigt`:''));
         // URL aktualisieren für Refresh-Sicherheit
@@ -3799,7 +3927,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.26.5 (Aufgabe 55 · Import-Timeout, Gb)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.0 (Aufgabe 55 · Testlauf-A1-Befunde)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4148,7 +4276,12 @@ function App(){
             innerhalb des Trip-Tabs nativ — keine Touches an den einzelnen Feldern nötig. */}
         <fieldset disabled={!isEditableStatus(tripStatus)&&!correctionMode} style={{border:'none',padding:0,margin:0,minWidth:0}}>
         <Section title="Basis-Informationen" icon="📌" open={openSections.basis} onToggle={()=>toggleSection('basis')}>
-          <Field label="Titel / Destination" badge="PFLICHT" mark={mk('reise_ort')}><TI placeholder="z.B. Andalusien, Spanien" value={trip.reise_ort} onChange={v=>setT('reise_ort',v)}/></Field>
+          <Field label="Titel / Destination" badge="PFLICHT" mark={mk('reise_ort')}><TI placeholder="z.B. Andalusien, Spanien" value={trip.reise_ort} onChange={v=>setT('reise_ort',v)}/>
+              {titelVorschlag&&titelVorschlag!==trip.reise_ort&&<div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginTop:6,fontSize:12,color:'#8A3A24'}}>
+                <span>Interview-Vorschlag: „{titelVorschlag}“</span>
+                <button type="button" onClick={()=>{setT('reise_ort',titelVorschlag);setTitelVorschlag('');}} style={{border:'1px solid var(--coral)',background:'var(--white)',color:'#8A3A24',borderRadius:4,fontSize:11,padding:'2px 8px',cursor:'pointer'}}>Übernehmen</button>
+                <button type="button" onClick={()=>{setTitelVorschlag('');setMarks(m=>{const n={...m};delete n.reise_ort;return n;});}} style={{border:'1px solid #CCC',background:'var(--white)',color:'#777',borderRadius:4,fontSize:11,padding:'2px 8px',cursor:'pointer'}}>Verwerfen</button>
+              </div>}</Field>
           <div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:16}}>
             <Field label="Region" badge="PFLICHT" half><Sel options={taxRegionSub} value={trip.region_sub} onChange={v=>setT('region_sub',v)}/></Field>
             <Field label="Land" badge="PFLICHT" half hint={trip.region_land?`Country-Code: ${getCountryCodeForLand()||'—'}`:''}><Sel options={taxRegionLand} value={trip.region_land} onChange={v=>setT('region_land',v)}/></Field>
@@ -4244,7 +4377,7 @@ function App(){
             <Field label="Komfort-Niveau" badge="EMPFOHLEN" info="comfort" mark={mkMatch('comfort')}><Slider labels={['Einfach','Solide','Komfortabel','Premium','Luxus']} value={trip.match.comfort} onChange={v=>setMatch('comfort',v)} dim="4"/></Field>
             <Field label="Kulturelle Tiefe" badge="EMPFOHLEN" info="cultural_depth" mark={mkMatch('cultural_depth')}><Slider labels={['Keine','Touch-Points','Solide','Tief','Immersiv']} value={trip.match.cultural_depth} onChange={v=>setMatch('cultural_depth',v)} dim="5"/></Field>
             {/* v0.14.1: "Kontemplativ" → "Entspannt" (Plan A3). Field-Label und Slider-Anker beide aktualisiert. */}
-            <Field label="Aktiv vs. Entspannt" badge="EMPFOHLEN" info="activity_mode" mark={mkMatch('activity_mode')}><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
+            <Field label="Entspannt vs. Aktiv" badge="EMPFOHLEN" info="activity_mode" mark={mkMatch('activity_mode')}><Slider labels={['Entspannt','Ruhig','Ausgewogen','Aktiv','Sehr aktiv']} value={trip.match.activity_mode} onChange={v=>setMatch('activity_mode',v)} dim="6"/></Field>
             <Field label="Insider-Tiefe" badge="EMPFOHLEN" info="authenticity" mark={mkMatch('authenticity')}><Slider labels={['Klassisch','Bekannt','Geheimtipp-Mix','Off-the-path','Versteckt']} value={trip.match.authenticity} onChange={v=>setMatch('authenticity',v)} dim="7"/></Field>
             {/* v0.14.1: Trust-Signale-Mehrfachauswahl entfernt, ersetzt durch eine einzelne Checkbox.
                 Datenseitig bleibt das Array trust_signale erhalten (Backend-kompatibel) — es enthält
@@ -4548,6 +4681,8 @@ function App(){
                         <Field label="Dauer" badge="OPTIONAL" half><Sel options={['30 min','1 Stunde','2 Stunden','3 Stunden','Halber Tag','Ganzer Tag']} value={s.dauer} onChange={v=>updateStopp(ti,si,'dauer',v)}/></Field>
                       </div>
                       <Field label="Insider-Tipps (F3)" badge="EMPFOHLEN" hint="Parkplatz, Laufroute, Historie..."><TA placeholder="Stichworte..." rows={2} value={s.insider_tipps} onChange={v=>updateStopp(ti,si,'insider_tipps',v)}/></Field>
+                      {/* v0.27.0 (Befund 5 / F1): Feld war gespeichert und im PDF genutzt, aber nicht sichtbar. */}
+                      <Field label="Besonderheit" badge="OPTIONAL" hint="Was diesen Ort für den Whisperer ausmacht (z. B. persönlicher Bezug)"><TA placeholder="optional" rows={2} value={s.besonderheit} onChange={v=>updateStopp(ti,si,'besonderheit',v)}/></Field>
                     </SubItemRow>;
                   }
                   if(entry.type==='food'){
@@ -4652,7 +4787,7 @@ function App(){
         const noDraft=!entwurfId||!draftPersisted;
         const fmtTs=v=>{if(!v)return '—';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('de-DE');};
         const rd=ivRead||{};
-        const block=(t,v,note)=>v?<div style={{marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:3}}>{t}{note&&<span style={{fontWeight:400,color:'#888',fontStyle:'italic'}}> — {note}</span>}</div><div style={{whiteSpace:'pre-wrap',background:'var(--white)',border:'1px solid #E0E0E0',borderRadius:6,padding:'8px 12px',fontSize:13,lineHeight:1.5}}>{typeof v==='string'?v:JSON.stringify(v,null,2)}</div></div>:null;
+        const block=(t,v,note)=>v?<div style={{marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:3}}>{t}{note&&<span style={{fontWeight:400,color:'#888',fontStyle:'italic'}}> — {note}</span>}</div><div style={{whiteSpace:'pre-wrap',background:'var(--white)',border:'1px solid #E0E0E0',borderRadius:6,padding:'8px 12px',fontSize:13,lineHeight:1.5}}>{typeof v==='string'?v:(React.isValidElement(v)?v:JSON.stringify(v,null,2))}</div></div>:null;
         return <div>
           <div style={{marginBottom:14}}>
             <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:18,color:'var(--sage)',fontWeight:700}}>🎙️ Whisperer-Interview</div>
@@ -4676,8 +4811,9 @@ function App(){
               {hasLink&&<div><span style={{color:'#888'}}>Whisperer:</span> <strong>{info.whisperer_name||'—'}</strong> {info.whisperer_email&&<span style={{color:'#888'}}>({info.whisperer_email})</span>} · Modus {info.modus||'—'}</div>}
             </div>
             {!hasLink&&<div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
-              <Field label="Name des Whisperers" badge="PFLICHT" half><TI placeholder="Vorname Nachname" value={ivForm.whisperer_name} onChange={v=>setIvForm(f=>({...f,whisperer_name:v}))}/></Field>
-              <Field label="E-Mail des Whisperers" badge="PFLICHT" half><TI placeholder="name@beispiel.de" value={ivForm.whisperer_email} onChange={v=>setIvForm(f=>({...f,whisperer_email:v}))}/></Field>
+              <div style={{flex:'1 1 100%',fontSize:12,color:'#777',marginTop:-4}}>Name und E-Mail der Person, die das Interview führt — nicht automatisch aus dem Login. Whisperer-Profil des Entwurfs: <strong>{whisperer.whisperer_id||'—'}</strong>{(whisperer.vorname||whisperer.nachname)?' ('+[whisperer.vorname,whisperer.nachname].filter(Boolean).join(' ')+')':''}</div>
+              <Field label="Name des Whisperers" badge="PFLICHT" half><TI name="ww-iv-whisperer-name" autoComplete="off" placeholder="Vorname Nachname" value={ivForm.whisperer_name} onChange={v=>setIvForm(f=>({...f,whisperer_name:v}))}/></Field>
+              <Field label="E-Mail des Whisperers" badge="PFLICHT" half><TI name="ww-iv-whisperer-email" autoComplete="off" placeholder="name@beispiel.de" value={ivForm.whisperer_email} onChange={v=>setIvForm(f=>({...f,whisperer_email:v}))}/></Field>
               <Field label="Modus" badge="PFLICHT"><Radio name="iv_modus" value={ivForm.modus} onChange={v=>setIvForm(f=>({...f,modus:v}))} options={[{value:'a',label:'a — Interview ohne Material'},{value:'b',label:'b — mit Upload (Text, Word, PDF)'}]}/></Field>
             </div>}
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
@@ -4704,6 +4840,7 @@ function App(){
             <div style={head}>2 · Aus Interview übernehmen</div>
             <div style={{fontSize:12,color:'#777',marginBottom:10,lineHeight:1.5}}>Füllt das Formular aus dem freigegebenen Interview vor. Es wird <strong>nichts gespeichert</strong> — erst „💾 Speichern“ schreibt den Entwurf. Vorschläge (Stil-Faktoren, emotionaler Charakter, Tag-Typen, Taxonomien, Zielgruppe) sind markiert und werden durch ✓ oder Ändern bestätigt.</div>
             <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?<span>Interview wird übernommen<span className="ww-dots"></span> {ivElapsed}s</span>:'Aus Interview übernehmen'}</button>
+            {ivCacheAvail&&!importResult&&!pendingImport&&canImport&&<button type="button" disabled={busy} onClick={handleImportRestore} title="Letzte Import-Antwort aus diesem Browser erneut anbieten — ohne neuen Import-Lauf" style={{...btn(false,busy),marginLeft:8}}>Letzten Import wiederherstellen ({fmtTs(ivCacheAvail.at)})</button>}
             {ivBusy==='import'&&<div style={{fontSize:12,color:'#777',marginTop:6}}>Der Import kann 1–3 Minuten dauern. Bitte die Seite nicht schließen.</div>}
             {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
             {importResult&&<div style={{marginTop:12}}>{renderImportPanel()}</div>}
@@ -4717,10 +4854,14 @@ function App(){
             {!rd.error&&ivRead&&!rd.ergebnis_text&&<div style={{fontSize:13,color:'#888'}}>Noch keine freigegebene Fassung vorhanden.</div>}
             {!rd.error&&rd.ergebnis_text&&<div>
               <div style={{fontSize:11,color:'#888',marginBottom:10}}>Erstellt {fmtTs(rd.zeitstempel&&rd.zeitstempel.created_at)} · freigegeben {fmtTs(rd.zeitstempel&&rd.zeitstempel.abgeschlossen_at)} · importiert {fmtTs(rd.zeitstempel&&rd.zeitstempel.importiert_at)}</div>
-              {block('Lesefassung',rd.ergebnis_text)}
-              {block('Offene Punkte',rd.offene_punkte)}
-              {block('Stimmung',rd.stimmung,'Eindruck des Interviewers, keine Aussage des Whisperers')}
-              {block('Herkunft',rd.herkunft)}
+              {block('Lesefassung',<IvMarkdown text={rd.ergebnis_text}/>)}
+              {(()=>{const op=ivParse(rd.offene_punkte);const arr=Array.isArray(op)?op:(op?[op]:[]);return arr.length?block('Offene Punkte',<ul style={{margin:'0 0 0 18px',padding:0}}>{arr.map((x,i)=><li key={i}>{ivFmtItem(x)}</li>)}</ul>):null;})()}
+              {(()=>{const st=ivParse(rd.stimmung);if(!st)return null;if(typeof st!=='object')return block('Stimmung',String(st),'Eindruck des Interviewers, keine Aussage des Whisperers');
+                const sw=Array.isArray(st.stichworte)?st.stichworte:[];const bl=Array.isArray(st.belege)?st.belege:[];const rest=Object.keys(st).filter(k=>k!=='stichworte'&&k!=='belege');
+                return block('Stimmung',<div>{sw.length>0&&<div><strong>Stichworte:</strong> {sw.join(', ')}</div>}{bl.length>0&&<div><strong>Belege:</strong><ul style={{margin:'2px 0 0 18px',padding:0}}>{bl.map((b,i)=><li key={i}>„{b}“</li>)}</ul></div>}{rest.map(k=><div key={k}><strong>{ivKeyLabel(k)}:</strong> {ivFmtVal(st[k])}</div>)}</div>,'Eindruck des Interviewers, keine Aussage des Whisperers');})()}
+              {(()=>{const hk=ivParse(rd.herkunft);if(!hk)return null;if(typeof hk!=='object')return block('Herkunft',String(hk));
+                const ks=Object.keys(hk).filter(k=>!(Array.isArray(hk[k])&&!hk[k].length)&&hk[k]!==''&&hk[k]!==null&&hk[k]!==undefined);
+                return ks.length?block('Herkunft',<div>{ks.map(k=><div key={k}><strong>{ivKeyLabel(k)}:</strong> {ivFmtVal(hk[k])}</div>)}</div>):null;})()}
               {Array.isArray(rd.material)&&rd.material.length>0&&<div style={{marginBottom:12}}>
                 <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:3}}>Material</div>
                 <ul style={{margin:'0 0 0 18px',fontSize:13}}>{rd.material.map((m,i)=><li key={i}>{(m&&(m.dateiname||m.name))||JSON.stringify(m)}{m&&m.typ?<span style={{color:'#888'}}> ({m.typ})</span>:null}</li>)}</ul>
@@ -5080,6 +5221,20 @@ function App(){
       </div>}
       {analyseStatus==='error'&&<div style={{position:'fixed',top:20,right:20,background:'#FFEBEE',border:'1px solid var(--red)',borderRadius:8,padding:'12px 18px',boxShadow:'0 4px 16px rgba(0,0,0,0.1)',zIndex:1300,fontSize:13,color:'var(--red)'}}>
         ⚠ {analyseMsg||'Analyse-Fehler.'}
+      </div>}
+      {/* v0.27.0 (Befund 1 / A1): Import-Bestätigung im Seitenfenster — bleibt beim Verlassen des Fensters stehen. */}
+      {pendingImport&&<div role="dialog" aria-modal="true" style={{position:'fixed',inset:0,background:'rgba(61,61,61,0.45)',zIndex:1400,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+        <div style={{background:'var(--white)',borderRadius:10,maxWidth:520,width:'100%',padding:'20px 22px',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}}>
+          <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:17,fontWeight:700,color:'var(--sage)',marginBottom:10}}>Formular mit Interview-Daten überschreiben?</div>
+          <div style={{fontSize:13,marginBottom:6}}>Betrifft bereits befüllte Felder:</div>
+          <ul style={{margin:'0 0 10px 18px',fontSize:13}}>{pendingImport.built.betroffen.map((b,i)=><li key={i}>{b}</li>)}</ul>
+          {pendingImport.built.titelNeu&&<div style={{fontSize:12,color:'#777',marginBottom:6}}>Titel bleibt; Interview-Vorschlag „{pendingImport.built.titelNeu}“ erscheint am Feld.</div>}
+          <div style={{fontSize:12,color:'#777',marginBottom:16}}>Andere Felder bleiben unverändert. Gespeichert wird erst mit „💾 Speichern“.</div>
+          <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+            <button type="button" onClick={()=>ivDecideImport(false)} style={{background:'var(--white)',color:'var(--anthrazit)',border:'2px solid #CCC',padding:'8px 16px',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}>Abbrechen</button>
+            <button type="button" onClick={()=>ivDecideImport(true)} style={{background:'var(--sage)',color:'var(--white)',border:'2px solid var(--sage)',padding:'8px 16px',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}>Übernehmen</button>
+          </div>
+        </div>
       </div>}
       {/* v0.16: Toast für Freigeben/Generieren (versetzt, damit er den Analyse-Toast nicht überdeckt). */}
       {actionToast&&<div style={{position:'fixed',top:70,right:20,background:actionToast.kind==='ok'?'#E8F5E9':'#FFEBEE',border:'1px solid '+(actionToast.kind==='ok'?'#6B8E5A':'var(--red)'),borderRadius:8,padding:'12px 18px',boxShadow:'0 4px 16px rgba(0,0,0,0.1)',zIndex:1300,fontSize:13,color:actionToast.kind==='ok'?'#2E7D32':'var(--red)'}}>
