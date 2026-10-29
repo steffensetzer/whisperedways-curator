@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.27.2 (Aufgabe 55 · e-D208 dauer frei, Aktivitäten)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.28.0 (L-WW-142 · Import-Ergebnis, Zeitlimits, Extrakt, Lesestöße)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -2182,10 +2182,31 @@ function App(){
     // pur durchgereicht (inline-Anzeige beim Aufrufer); HTTP-Präfix nur als Fallback ohne error-Feld.
     // v0.22.1: Bei ungültigem/leerem Body den HTTP-Status immer mitzeigen — v0.22.0 verschluckte ihn,
     // weil der Parse-Fallback-Text als Server-error galt ("Antwort kein gültiges JSON:" ohne Status).
-    if(!res.ok) throw new Error((data&&data.error)||`HTTP ${res.status}: ${txt.substring(0,150)||'(leere Antwort)'}`);
+    // v0.28.0 (Teil 4): Antwort mit hinweis (z. B. 503 sheets_nicht_erreichbar) → Hinweis statt Fehlercode.
+    if(!res.ok) throw new Error((data&&data.hinweis)||(data&&data.error)||`HTTP ${res.status}: ${txt.substring(0,150)||'(leere Antwort)'}`);
     if(data===null) return {error:'Antwort kein gültiges JSON (HTTP '+res.status+(txt?'): '+txt.substring(0,200):', leere Antwort)')};
     return data;
   },[apiBase,authHeaderName,authHeaderValue]);
+
+  // v0.28.0 (Brief 2026-10-29, Teil 4 / NEU-5): Lesestöße gegen WF1 bündeln (Sheets-Lesekontingent).
+  // (a) Ladeaufrufe (Bootstrap, load-draft, whisperer-load, hotel-single) laufen über eine Warteschlange mit
+  //     höchstens 2 gleichzeitigen Anfragen — keine Fünfergruppen in derselben Sekunde.
+  // (b) Selten geänderte Listen (/taxonomien, /tagesarten, /whisperer-i) 15 min im sessionStorage (je Tab);
+  //     Entwurfswechsel (voller Reload) liest sie dann nicht erneut. Nur fehlerfreie Antworten werden gespeichert.
+  const loadQ=useRef({aktiv:0,warte:[]});
+  const apiLoad=useCallback((path)=>new Promise((resolve,reject)=>{
+    const q=loadQ.current;
+    const start=()=>{q.aktiv++;apiCall('GET',path).then(resolve,reject).finally(()=>{q.aktiv--;const n=q.warte.shift();if(n)n();});};
+    if(q.aktiv<2) start(); else q.warte.push(start);
+  }),[apiCall]);
+  const BOOT_TTL=15*60*1000;
+  const apiLoadCached=useCallback(async(path)=>{
+    const k='ww_boot_'+path;
+    try{const x=JSON.parse(sessionStorage.getItem(k)||'null');if(x&&x.d&&Date.now()-x.at<BOOT_TTL) return x.d;}catch{}
+    const d=await apiLoad(path);
+    if(d&&!d.error){try{sessionStorage.setItem(k,JSON.stringify({at:Date.now(),d}));}catch{}}
+    return d;
+  },[apiLoad]);
 
   // v0.14.5: Profilfoto-Upload — POST /profilfoto-upload mit Blob als rawBody, Filename als Query-Param.
   // Antwortformat: {success, file_id, drive_link, name}. Wir adoptieren drive_link in profilfoto_urls.
@@ -2310,7 +2331,7 @@ function App(){
     if(toRefresh.length>0){
       (async()=>{
         const results=await Promise.all(toRefresh.map(h=>
-          apiCall('GET',`/hotel-single?hotel_id=${encodeURIComponent(h.hotel_id)}`).catch(()=>null)
+          apiLoad(`/hotel-single?hotel_id=${encodeURIComponent(h.hotel_id)}`).catch(()=>null)
         ));
         // 1) Status/Grund → eigener State (NICHT nach trip.hotels, siehe Kommentar bei hotelStatus)
         const statusPatch={};
@@ -2336,20 +2357,23 @@ function App(){
         });
       })();
     }
-  },[apiCall]);
+  },[apiLoad]);
 
   // ============== BOOTSTRAP: Taxonomien + Tagesarten ==============
   // Reagiert auf API-Settings-Änderungen (wenn User Header tippt → erneut laden)
+  // v0.28.0 (Teil 4): erst nach Login und mit Schlüssel — vorher startete jeder Tastendruck im Schlüsselfeld
+  // drei WF1-Aufrufe. Listen aus dem 15-min-Zwischenspeicher, sonst über die Warteschlange (max. 2 parallel).
   useEffect(()=>{
+    if(!currentUserId||!authHeaderValue) return;
     let cancelled=false;
     (async()=>{
       setBootstrap({status:'pending',error:''});
       const [tax,ta,wi]=await Promise.all([
-        apiCall('GET','/taxonomien').catch(e=>({error:e.message,terms:[]})),
-        apiCall('GET','/tagesarten').catch(e=>({error:e.message,tagesarten:[]})),
+        apiLoadCached('/taxonomien').catch(e=>({error:e.message,terms:[]})),
+        apiLoadCached('/tagesarten').catch(e=>({error:e.message,tagesarten:[]})),
         // v0.18.0: Hilfetexte für „i"-Tooltips. Non-kritisch — Fehler/404 nur still ignorieren,
         // beeinflusst NICHT den Bootstrap-Status; bei leerem Ergebnis greift der Fallback-String.
-        apiCall('GET','/whisperer-i').catch(e=>({error:e.message,texte:[]}))
+        apiLoadCached('/whisperer-i').catch(e=>({error:e.message,texte:[]}))
       ]);
       if(cancelled) return;
 
@@ -2386,7 +2410,7 @@ function App(){
       }
     })();
     return()=>{cancelled=true;};
-  },[apiCall]);
+  },[apiLoadCached,currentUserId,authHeaderValue]);
 
   // ============== DRAFT-LOAD (nur einmal beim Mount) ==============
   // Bewusst getrennt vom Bootstrap, damit User-Edits nicht überschrieben werden,
@@ -2404,7 +2428,7 @@ function App(){
     let cancelled=false;
     (async()=>{
       try{
-        const d=await apiCall('GET',`/load-draft?entwurf_id=${encodeURIComponent(draftIdParam)}&user_id=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(role)}`);
+        const d=await apiLoad(`/load-draft?entwurf_id=${encodeURIComponent(draftIdParam)}&user_id=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(role)}`);
         if(!cancelled){
           if(d.success&&d.mode==='single'){
             setLoadAccessError('');
@@ -2422,7 +2446,7 @@ function App(){
       finally{if(!cancelled) setDraftLoadTried(true);}
     })();
     return()=>{cancelled=true;};
-  },[apiCall,authHeaderValue,currentUserId,role,hydrateFromDraft,draftLoadTried]);
+  },[apiLoad,authHeaderValue,currentUserId,role,hydrateFromDraft,draftLoadTried]);
 
   // ============== v0.14.3: WHISPERER-AUTO-LOAD (nur einmal pro Session) ==============
   // Lädt automatisch das Whisperer-Profil des eingeloggten Users beim ersten Render mit currentUserId.
@@ -2437,7 +2461,7 @@ function App(){
     let cancelled=false;
     (async()=>{
       try{
-        const data=await apiCall('GET','/whisperer-load?user_id='+encodeURIComponent(currentUserId));
+        const data=await apiLoad('/whisperer-load?user_id='+encodeURIComponent(currentUserId));
         if(cancelled) return;
         if(data.success===false){
           // "Kein Profil" → still ignorieren (User legt eines an).
@@ -2463,7 +2487,7 @@ function App(){
       }
     })();
     return()=>{cancelled=true;};
-  },[apiCall,authHeaderValue,currentUserId,whispererAutoLoadTried,hydrateWhisperer]);
+  },[apiLoad,authHeaderValue,currentUserId,whispererAutoLoadTried,hydrateWhisperer]);
 
   // ============== TAXONOMIE-OPTIONEN (mit lokalem Fallback wenn API leer) ==============
   const taxRegionLand=(taxonomien.region_land&&taxonomien.region_land.length)?taxonomien.region_land:[
@@ -2819,8 +2843,6 @@ function App(){
   const[pendingImport,setPendingImport]=useState(null);
   // v0.27.0 (Befund 2 / B1): übernommene, noch nicht gespeicherte Interview-Daten → beforeunload-Warnung.
   const[importUnsaved,setImportUnsaved]=useState(false);
-  // v0.27.0 (B1): letzte Import-Antwort je entwurf_id in localStorage → „Letzten Import wiederherstellen“.
-  const[ivCacheAvail,setIvCacheAvail]=useState(null);
   // v0.27.0 (Befund 4 / D1): Titel aus Interview nur als Vorschlag, wenn das Feld bereits gefüllt ist.
   const[titelVorschlag,setTitelVorschlag]=useState('');
   const ivMockStore=useRef({});                   // Mock-Zustand je entwurf_id
@@ -2828,6 +2850,11 @@ function App(){
   // Fehler mit HTTP-Status, Code und Hinweis (c: error ab v1.1, heute fehler).
   const ivErr=(r,status,what)=>{
     const code=(r&&(r.error||r.fehler))||'';
+    // v0.28.0 (Brief 2026-10-29, Teil 4): 503 sheets_nicht_erreichbar → nur der Hinweis aus der Antwort.
+    if(code==='sheets_nicht_erreichbar'){
+      const e=new Error((r&&r.hinweis)||'Google Sheets ist gerade überlastet. Bitte in einer Minute erneut versuchen.');
+      e.status=status||503;e.code=code;e.data=r||null;return e;
+    }
     const e=new Error((code||(what+': Antwort ohne ok-Feld (als Fehler gewertet)'))+(r&&r.hinweis?' — '+r.hinweis:'')+(status&&status!==200?' (HTTP '+status+')':''));
     e.status=status||0;e.code=code;e.data=r||null;
     return e;
@@ -2838,17 +2865,30 @@ function App(){
   };
   // Live-Aufruf WF-INT. Mock-Antworten laufen über ivRequireOk.
   // v0.26.5: importieren kann 1–3 min dauern (n8n-Timeout 300 s) → Client-Timeout 310 s; sonst 60 s.
+  // v0.28.0 (Brief 2026-10-29, Teil 2): importieren 660 s (n8n-Modellaufruf 600 s). Abbruch/Netzfehler/
+  // Antwort ohne JSON tragen e.unklar=true → Rückfallweg über import_ergebnis. e.nachSek + e.technik
+  // für den Safari-Befund (Kriterium 6): nach wie vielen Sekunden und mit welchem Browserfehler.
+  const IV_TIMEOUT={importieren:660000};
+  const ivUnklar=(text,sek,e,status)=>{const er=new Error(text);er.status=status||0;er.code='';er.data=null;er.unklar=true;er.nachSek=sek;er.technik=e?((e.name?e.name+': ':'')+(e.message||'')):'';return er;};
   const ivFetch=async(action,payload)=>{
     const headers={'Content-Type':'application/json'};
     if(authHeaderName&&authHeaderValue) headers[authHeaderName]=authHeaderValue;
-    const ctl=new AbortController();const ms=action==='importieren'?310000:60000;
+    const ctl=new AbortController();const ms=IV_TIMEOUT[action]||60000;
     const tmr=setTimeout(()=>ctl.abort(),ms);
+    const t0=Date.now();
     let res;
     try{res=await fetch(ivBase(),{method:'POST',headers,signal:ctl.signal,body:JSON.stringify({action,user_id:currentUserId,role,...payload})});}
-    catch(e){clearTimeout(tmr);if(e&&e.name==='AbortError') throw ivErr(null,0,'Zeitüberschreitung nach '+Math.round(ms/1000)+' s ('+action+')');throw e;}
+    catch(e){
+      clearTimeout(tmr);
+      const sek=Math.round((Date.now()-t0)/1000);
+      throw ivUnklar((e&&e.name==='AbortError')?'Zeitlimit '+Math.round(ms/1000)+' s erreicht ('+action+')':'Verbindung abgebrochen ('+action+')',sek,e);
+    }
     clearTimeout(tmr);
-    const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch{}
-    if(!data) throw ivErr(null,res.status,'HTTP '+res.status+': '+(txt.substring(0,150)||'leere Antwort'));
+    let txt='';
+    try{txt=await res.text();}
+    catch(e){throw ivUnklar('Antwort abgebrochen ('+action+')',Math.round((Date.now()-t0)/1000),e,res.status);}
+    let data=null;try{data=JSON.parse(txt);}catch{}
+    if(!data) throw ivUnklar('HTTP '+res.status+': '+(txt.substring(0,150)||'leere Antwort')+' ('+action+')',Math.round((Date.now()-t0)/1000),null,res.status);
     if(data.ok!==true) throw ivErr(data,res.status,action);
     return data;
   };
@@ -2867,7 +2907,9 @@ function App(){
     importiert_at:r.importiert_at||'',
     whisperer_name:r.whisperer_name||'',
     whisperer_email:r.whisperer_email||'',
-    modus:r.modus||''
+    modus:r.modus||'',
+    // v0.28.0 (WF-INT v1.5): gespeicherter S2-Vorschlag vorhanden → Übernahme ohne neuen Import-Lauf.
+    import_ergebnis_vorhanden:r.import_ergebnis_vorhanden===true
   });
 
   // ---------- Mock (nur bis c-Endpunkte stehen) ----------
@@ -2877,7 +2919,7 @@ function App(){
     const fakeUrl=()=>'https://whisperedways.com/whisperer-gespraech/?t=MOCK-'+Math.random().toString(36).slice(2,10);
     if(aktion==='status'){
       if(!st) return {ok:false,error:'nicht_gefunden',_status:404};
-      return {ok:true,...st};
+      return {ok:true,...st,import_ergebnis_vorhanden:!!st._s2};
     }
     if(aktion==='erzeugen'){
       if(st&&st.interview_id) return {ok:false,error:'interview_existiert',interview_id:st.interview_id};
@@ -2892,12 +2934,18 @@ function App(){
       const n={...st,token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60()};ivMockStore.current[entwurfId]=n;
       return body.neues_token?{ok:true,...n,url:fakeUrl()}:{ok:true,...n};
     }
-    if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
+    if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1};ivMockStore.current[entwurfId]=n;return {ok:true,...n,import_ergebnis_vorhanden:!!n._s2};}
+    // v0.28.0: extrakt_wiederholen (409 bei abgeschlossen/importiert oder ohne freigegebene Fassung).
+    if(aktion==='extrakt_wiederholen'){
+      if(['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:false,error:'extrakt_nicht_moeglich',hinweis:'Runde 1 ist bereits abgeschlossen oder importiert.',_status:409};
+      return {ok:true,gestartet:true,hinweis:'[Mock] Extrakt läuft im Hintergrund (3–8 min).'};
+    }
     return {ok:false,error:'Unbekannte Aktion'};
   };
   const ivMockLesen=()=>{
     const st=ivMockStore.current[entwurfId];
-    if(!st||!['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:true,status_runde1:st?st.status_runde1:'',ergebnis_text:'',offene_punkte:'',stimmung:'',herkunft:'',material:[],zeitstempel:{}};
+    // v0.28.0: Mock „zwischenstand“ liefert Text = freigegebene Fassung ohne Extrakt (Test „Extrakt wiederholen“).
+    if(!st||!['abgeschlossen','importiert','zwischenstand'].includes(st.status_runde1)) return {ok:true,status_runde1:st?st.status_runde1:'',ergebnis_text:'',offene_punkte:'',stimmung:'',herkunft:'',material:[],zeitstempel:{}};
     return {ok:true,status_runde1:st.status_runde1,
       ergebnis_text:'TEIL 1 — Gesamtreise\n[Mock] Lesefassung des freigegebenen Interviews. Hier erscheint der Text, wie der Whisperer ihn freigegeben hat.\n\nTEIL 2 — Tag 1\n[Mock] Ankunft, erster Spaziergang …',
       offene_punkte:'- [Mock] Name des Restaurants an Tag 2 unklar\n- [Mock] Öffnungszeiten Markt prüfen',
@@ -2909,7 +2957,6 @@ function App(){
   const ivMockImport=()=>{
     const st=ivMockStore.current[entwurfId];
     if(!st||!['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:false,error:'Runde 1 ist nicht abgeschlossen.'};
-    ivMockStore.current[entwurfId]={...st,status_runde1:'importiert'};
     const n=Math.max(tage.length,3);
     const tg=[];
     for(let i=0;i<n;i++){
@@ -2928,13 +2975,31 @@ function App(){
       markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'vorschlaege.emo_tonalitaet',grund:'[Mock] „eher ernste Gespräche“'},{pfad:'vorschlaege.match_dimensions_json.pace',grund:'[Mock] „gemächlich“'},{pfad:'hotels_pool_json[0].name',grund:'[Mock] Name sinngemäß'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'},{pfad:'mit_kindern',grund:'[Mock] Kinder im Interview erwähnt'}],
       kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen'],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
   };
+  // v0.28.0: Mock speichert den S2-Vorschlag wie WF-INT-IMPORT v1.4 (nur bei Erfolg) und liefert ihn über import_ergebnis.
+  const ivMockImportSave=()=>{
+    const r=ivMockImport();
+    if(r.ok){const st=ivMockStore.current[entwurfId];ivMockStore.current[entwurfId]={...st,status_runde1:'importiert',_s2:{...r,gespeichert_at:new Date().toISOString()}};}
+    return r;
+  };
+  const ivMockImportErgebnis=()=>{
+    const st=ivMockStore.current[entwurfId];
+    if(!st||!st._s2) return {ok:false,error:'kein_import_ergebnis',_status:404};
+    return {...st._s2,action:'import_ergebnis',quelle:'gespeichert'};
+  };
 
   // ---------- B1: Link ----------
   // Mock-Antwort in denselben Fehlerweg wie live bringen (404 → status).
+  // v0.28.0: Mock-Fehler simulieren (nur Admin, Mock-Modus): 'abbruch' = importieren speichert, Antwort geht verloren;
+  // '503' = nächster Aufruf liefert sheets_nicht_erreichbar.
+  const[ivMockFail,setIvMockFail]=useState('');
   const ivRun=async(action,payload)=>{
     if(!ivMock) return ivFetch(action,payload);
-    const r=action==='lesen'?ivMockLesen():action==='importieren'?ivMockImport():ivMockLink(action,payload);
+    await new Promise(z=>setTimeout(z,action==='importieren'?2000:200));
+    if(ivMockFail==='503'){setIvMockFail('');throw ivErr({ok:false,error:'sheets_nicht_erreichbar',hinweis:'Google Sheets ist gerade ueberlastet. Bitte in einer Minute erneut versuchen.'},503,action);}
+    if(action==='importieren'&&ivMockFail==='abbruch'){setIvMockFail('');ivMockImportSave();throw ivUnklar('Zeitlimit 660 s erreicht (importieren) [Mock]',660,{name:'AbortError',message:'Mock'});}
+    const r=action==='lesen'?ivMockLesen():action==='importieren'?ivMockImportSave():action==='import_ergebnis'?ivMockImportErgebnis():ivMockLink(action,payload);
     if(!r||r.ok!==true) throw ivErr(r,r&&r._status||409,action);
+    if(['status','erzeugen','sperren','erneuern','mock_status'].includes(action)){const st=ivMockStore.current[entwurfId];r.import_ergebnis_vorhanden=!!(st&&st._s2);}
     return r;
   };
   const ivLinkAction=async(aktion,extra={})=>{
@@ -3143,35 +3208,26 @@ function App(){
       offene_punkte:Array.isArray(r.offene_punkte)?r.offene_punkte:[],
       warnungen:Array.isArray(r.warnungen)?r.warnungen:[],
       hinweise:[...hinweise,...ohneAnzeige.map(x=>'Markierung ohne Feldanzeige: '+x)],
-      at:new Date().toISOString()
+      at:new Date().toISOString(),
+      // v0.28.0: Herkunft des Vorschlags — gespeichert (import_ergebnis) mit gespeichert_at oder frischer Import.
+      quelle:r.quelle||'',gespeichert_at:r.gespeichert_at||''
     });
     setImportChecks({});
     // Abschnitte mit Markierungen aufklappen
     const sec={reise_ort:'basis',anreise:'basis',empfohlene_monate:'basis',mietwagen:'logistik',flughafen_empfehlung:'logistik',hotels:'logistik',freitext_gesamtreise:'logistik',reise_format:'taxonomie',reise_thema:'taxonomie',reise_charakter:'taxonomie',zielgruppe:'taxonomie',aktivitaets_level:'taxonomie',mit_kindern:'taxonomie',match:'match',trust_signale:'match',emo_tonalitaet:'match',emo_international:'match',emo_persoenlichkeitsfit:'match',persoenliche_erfahrung:'persoenlich',magic_moment:'persoenlich',sicherheitshinweise:'persoenlich'};
     setOpenSections(o=>{const n={...o};Object.keys(topMarks).forEach(k=>{const s2=sec[k.split('.')[0]];if(s2)n[s2]=true;});return n;});
   };
-  // v0.27.0 (B1): Zwischenspeicher der letzten Import-Antwort je Entwurf (nur Komfort, 7 Tage).
-  const IV_CACHE_PREFIX='ww_iv_import_';
-  const ivCacheSave=(id,r)=>{try{localStorage.setItem(IV_CACHE_PREFIX+id,JSON.stringify({at:new Date().toISOString(),r}));}catch{}};
-  const ivCacheLoad=id=>{
-    try{
-      const x=JSON.parse(localStorage.getItem(IV_CACHE_PREFIX+id)||'null');
-      if(!x||!x.r) return null;
-      if(Date.now()-new Date(x.at).getTime()>7*864e5){localStorage.removeItem(IV_CACHE_PREFIX+id);return null;}
-      return x;
-    }catch{return null;}
-  };
-  const ivCacheClear=id=>{try{localStorage.removeItem(IV_CACHE_PREFIX+id);}catch{}};
-  useEffect(()=>{setIvCacheAvail(entwurfId&&draftPersisted?ivCacheLoad(entwurfId):null);
-  // eslint-disable-next-line
-  },[entwurfId,draftPersisted]);
+  // v0.28.0 (Brief 2026-10-29, Teil 1, Entscheid Steffen): lokaler Zwischenspeicher aus v0.27.0 (B1) entfällt —
+  // Quelle des gespeicherten S2-Vorschlags ist WF-INT `import_ergebnis` (v1.5). Alte Browser-Einträge einmalig entfernen.
+  useEffect(()=>{try{Object.keys(localStorage).filter(k=>k.indexOf('ww_iv_import_')===0).forEach(k=>localStorage.removeItem(k));}catch{}},[]);
   // v0.27.0 (B1): Warnung beim Neuladen/Schließen, solange Import-Daten offen oder ungespeichert sind.
+  // v0.28.0: auch während eines laufenden Imports (Neuladen würde die Antwort verwerfen).
   useEffect(()=>{
-    if(!importUnsaved&&!pendingImport) return;
+    if(!importUnsaved&&!pendingImport&&ivBusy!=='import') return;
     const h=e=>{e.preventDefault();e.returnValue='';return '';};
     window.addEventListener('beforeunload',h);
     return ()=>window.removeEventListener('beforeunload',h);
-  },[importUnsaved,pendingImport]);
+  },[importUnsaved,pendingImport,ivBusy]);
   const ivDoApply=(r,built)=>{
     ivApply(r,built);
     setImportUnsaved(true);
@@ -3186,35 +3242,122 @@ function App(){
     const p=pendingImport;setPendingImport(null);
     if(!p) return;
     if(ok){ivDoApply(p.r,p.built);}
-    else{ivCacheClear(entwurfId);setIvCacheAvail(null);setIvMsg({kind:'info',text:'Import abgebrochen — Formular unverändert.'});}
+    else{setIvMsg({kind:'info',text:'Übernahme abgebrochen — Formular unverändert. Das gespeicherte Import-Ergebnis bleibt abrufbar.'});}
   };
   const ivCanEdit=()=>{
     if(!entwurfId||!draftPersisted){setIvMsg({kind:'err',text:'Bitte den Entwurf zuerst speichern.'});return false;}
     if(!isEditableStatus(tripStatus)&&!correctionMode){setIvMsg({kind:'err',text:'Entwurf ist nicht editierbar (Status '+(STATUS_LABELS[tripStatus]||tripStatus)+').'});return false;}
     return true;
   };
+  const ivTs=v=>{if(!v)return '—';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('de-DE');};
+  // v0.28.0: Zustand Rückfallweg (3.2). {base,baseOk,diag}: base = gespeichert_at vor dem Start (null = keins),
+  // baseOk=false = Basiswert nicht ermittelbar. Vergleich ausschließlich auf Änderung (keine Uhr, Entscheid Steffen).
+  const[ivImportPending,setIvImportPending]=useState(null);
+  const[ivConfirmNew,setIvConfirmNew]=useState(false);
+  const ivBusyRef=useRef('');
+  useEffect(()=>{ivBusyRef.current=ivBusy;},[ivBusy]);
+  // Gespeichertes Ergebnis holen; null bei 404 kein_import_ergebnis, sonst Fehler weiterreichen (502/503 …).
+  const ivGetStored=async()=>{
+    try{
+      const r=await ivRun('import_ergebnis',{entwurf_id:entwurfId});
+      if(r.entwurf_id&&r.entwurf_id!==entwurfId) throw new Error('Import-Ergebnis gehört zu einem anderen Entwurf ('+r.entwurf_id+').');
+      return r;
+    }catch(e){
+      if(e.status===404||e.code==='kein_import_ergebnis') return null;
+      if(e.code==='import_ergebnis_nicht_lesbar') e.message='Das gespeicherte Import-Ergebnis ist nicht lesbar (Drive-Datei). Bitte an c melden oder „Neu importieren“.';
+      throw e;
+    }
+  };
+  const ivTakeStored=(r)=>{
+    setIvImportPending(null);
+    setIvInfo(i=>i?{...i,import_ergebnis_vorhanden:true}:i);
+    ivOfferImport(r);
+  };
+  // Teil 1: „Aus Interview übernehmen“ — gespeicherter Vorschlag, wenn vorhanden; sonst erster Import (Entscheid Steffen).
   const handleImport=async()=>{
-    if(!canManage) return;
-    if(!ivCanEdit()) return;
-    setIvBusy('import');setIvMsg(null);
+    if(!canManage||!ivCanEdit()) return;
+    if(!(ivInfo&&ivInfo.import_ergebnis_vorhanden)) return runImport();
+    setIvBusy('import_laden');setIvMsg(null);setIvConfirmNew(false);
+    try{
+      const r=await ivGetStored();
+      if(r) ivTakeStored(r);
+      else{
+        setIvInfo(i=>i?{...i,import_ergebnis_vorhanden:false}:i);
+        setIvMsg({kind:'info',text:'Kein gespeichertes Import-Ergebnis gefunden. „Aus Interview übernehmen“ startet jetzt einen Import (mehrere Minuten).'});
+      }
+    }catch(e){setIvMsg({kind:'err',text:'Import-Ergebnis laden fehlgeschlagen: '+e.message});}
+    setIvBusy('');
+  };
+  // Teil 1+2: neuer Import (WF-INT-IMPORT). Zeitlimit 660 s; bei unklarem Abbruch Rückfall über import_ergebnis.
+  const runImport=async()=>{
+    if(!canManage||!ivCanEdit()) return;
+    setIvConfirmNew(false);setIvMsg(null);setIvImportPending(null);
+    let base=null,baseOk=true;
+    if(ivInfo&&ivInfo.import_ergebnis_vorhanden){
+      setIvBusy('import_laden');
+      try{const r0=await ivGetStored();base=r0?(r0.gespeichert_at||''):null;}
+      catch(e){baseOk=false;}
+    }
+    setIvBusy('import');
     try{
       const r=await ivRun('importieren',{entwurf_id:entwurfId});
       if(r.entwurf_id&&r.entwurf_id!==entwurfId) throw new Error('Import-Antwort gehört zu einem anderen Entwurf ('+r.entwurf_id+').');
-      ivCacheSave(entwurfId,r);setIvCacheAvail(ivCacheLoad(entwurfId));
       ivOfferImport(r);
-      // Status nachladen (c setzt importiert); v0.27.0 (Befund 9): auch Abschnitt 3 (importiert_at).
+      // Status nachladen (c setzt importiert, liefert import_ergebnis_vorhanden); v0.27.0 (Befund 9): auch Abschnitt 3.
       try{const s2=await ivRun('status',{entwurf_id:entwurfId});setIvInfo(ivPickInfo(s2));}catch{}
       try{setIvRead(await ivRun('lesen',{entwurf_id:entwurfId}));}catch{}
-    }catch(e){setIvMsg({kind:'err',text:'Import fehlgeschlagen: '+e.message});}
+      setIvBusy('');
+    }catch(e){
+      if(!e.unklar){setIvMsg({kind:'err',text:'Import fehlgeschlagen: '+e.message});setIvBusy('');return;}
+      const diag=' (Abbruch nach '+e.nachSek+' s'+(e.technik?' · '+e.technik:'')+')';
+      const p={base,baseOk,diag};
+      setIvImportPending(p);
+      setIvBusy('import_warten');
+      setIvMsg({kind:'info',text:'Anfrage abgebrochen: '+e.message+diag+'. In 30 s wird geprüft, ob das Ergebnis gespeichert wurde …'});
+      await new Promise(z=>setTimeout(z,30000));
+      await ivCheckPending(p,true);
+    }
+  };
+  // 3.2: einmal automatisch nach 30 s, danach über „Import-Ergebnis laden“.
+  const ivCheckPending=async(p,auto)=>{
+    p=p||ivImportPending||{base:null,baseOk:false,diag:''};
+    setIvBusy('import_laden');
+    try{
+      const r=await ivGetStored();
+      const neu=!!r&&p.baseOk&&(p.base===null||(!!r.gespeichert_at&&r.gespeichert_at!==p.base));
+      if(neu||(r&&!p.baseOk&&!auto)){
+        ivTakeStored(r);
+        try{const s2=await ivRun('status',{entwurf_id:entwurfId});setIvInfo(ivPickInfo(s2));}catch{}
+      }else{
+        setIvMsg({kind:'info',text:'Der Import läuft eventuell noch. Bitte in einigen Minuten „Import-Ergebnis laden“ wählen.'+(r&&r.gespeichert_at?' Gespeichert ist bisher nur der Stand vom '+ivTs(r.gespeichert_at)+'.':'')+(p.diag||'')});
+      }
+    }catch(e){
+      setIvMsg({kind:'err',text:'Import-Ergebnis konnte nicht geprüft werden: '+e.message+' Bitte später „Import-Ergebnis laden“ wählen.'+(p.diag||'')});
+    }
     setIvBusy('');
   };
-  // v0.27.0 (B1): zwischengespeicherte Antwort erneut anbieten (ohne neuen WF-INT-IMPORT-Lauf).
-  const handleImportRestore=()=>{
-    if(!canManage||!ivCanEdit()) return;
-    const x=ivCacheLoad(entwurfId);
-    if(!x){setIvCacheAvail(null);setIvMsg({kind:'err',text:'Kein zwischengespeicherter Import vorhanden.'});return;}
-    setIvMsg({kind:'info',text:'Zwischengespeicherter Import vom '+new Date(x.at).toLocaleString('de-DE')+' wird angeboten.'});
-    ivOfferImport(x.r);
+  // Teil 3: „Extrakt wiederholen“ (WF-INT-EXTRAKT im Hintergrund, 3–8 min); Statusabfrage nach 5 min.
+  const ivExtraktTimer=useRef(null);
+  useEffect(()=>()=>{if(ivExtraktTimer.current) clearTimeout(ivExtraktTimer.current);},[]);
+  const handleExtrakt=async()=>{
+    if(!canManage) return;
+    const iid=(ivInfo&&ivInfo.interview_id)||'';
+    if(!iid){setIvMsg({kind:'err',text:'Kein Interview zu diesem Entwurf.'});return;}
+    setIvBusy('extrakt');setIvMsg(null);
+    try{
+      const r=await ivRun('extrakt_wiederholen',{interview_id:iid});
+      setIvMsg({kind:'ok',text:(r.hinweis||'Extrakt gestartet.')+' Der Status wird in ca. 5 Minuten automatisch aktualisiert.'});
+      if(ivExtraktTimer.current) clearTimeout(ivExtraktTimer.current);
+      ivExtraktTimer.current=setTimeout(async()=>{
+        ivExtraktTimer.current=null;
+        if(ivBusyRef.current) return; // anderer Vorgang läuft — Nutzer aktualisiert über „Status aktualisieren“
+        await ivLinkAction('status');await ivLoadRead();
+      },5*60000);
+    }catch(e){
+      if(e.status===409||e.code==='extrakt_nicht_moeglich') setIvMsg({kind:'err',text:'Extrakt nicht möglich: '+((e.data&&e.data.hinweis)||'keine freigegebene Fassung oder Runde 1 bereits abgeschlossen/importiert.')});
+      else setIvMsg({kind:'err',text:'Extrakt wiederholen fehlgeschlagen: '+e.message});
+    }
+    setIvBusy('');
   };
   // Markierungen: Zugriff, Bestätigen, Zählen
   const mk=(key)=>marks[key]?{grund:marks[key],onOk:()=>setMarks(m=>{const n={...m};delete n[key];return n;})}:null;
@@ -3240,6 +3383,8 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
         <strong style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:14,color:'#8A3A24'}}>🎙️ Aus Interview übernommen — noch nicht gespeichert, bis „💾 Speichern“</strong>
         <span style={{fontSize:11,color:'#8A3A24',background:'var(--coral-light)',borderRadius:4,padding:'1px 6px',fontWeight:700}}>{openMarkCount} offene Vorschläge</span>
+        {/* v0.28.0: Herkunft des Vorschlags */}
+        <span style={{fontSize:11,color:'#777'}}>{importResult.quelle==='gespeichert'?('gespeicherter Vorschlag vom '+ivTs(importResult.gespeichert_at)):('Import vom '+ivTs(importResult.gespeichert_at||importResult.at))}</span>
         <button type="button" onClick={()=>setImportResult(null)} title="Panel ausblenden (Markierungen bleiben)" style={{marginLeft:'auto',background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>✕</button>
       </div>
       {grp('Kontrollpunkte',importResult.kontrollpunkte,'k','var(--sage-dark)')}
@@ -3392,7 +3537,7 @@ function App(){
         setSaveStatus('success');
         setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
         // v0.27.0 (B1): übernommene Interview-Daten sind gespeichert → Warnung und Zwischenspeicher weg.
-        if(importUnsaved){setImportUnsaved(false);ivCacheClear(entwurfId);setIvCacheAvail(null);}
+        if(importUnsaved){setImportUnsaved(false);}
         // v0.26.1 (B2.4): offene Interview-Markierungen nur als Hinweis zählen (keine Sperre).
         setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId+(openMarkCount>0?` — Hinweis: ${openMarkCount} Vorschläge aus Interview noch nicht bestätigt`:''));
         // URL aktualisieren für Refresh-Sicherheit
@@ -3934,7 +4079,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.27.2 (Aufgabe 55 · e-D208 dauer frei, Aktivitäten)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.28.0 (L-WW-142 · Import-Ergebnis, Zeitlimits, Extrakt, Lesestöße)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4792,6 +4937,8 @@ function App(){
         const R1={offen:'offen',zwischenstand:'Zwischenstand',abgeschlossen:'abgeschlossen (vom Whisperer freigegeben)',importiert:'importiert'};
         const TK={aktiv:'aktiv',gesperrt:'gesperrt',abgelaufen:'abgelaufen'};
         const canImport=['abgeschlossen','importiert'].includes(info.status_runde1)&&(isEditableStatus(tripStatus)||correctionMode);
+        // v0.28.0 (Teil 3, Entscheid Steffen): freigegebene Fassung (ergebnis_text aus „lesen“) und Runde 1 noch offen/Zwischenstand.
+        const extraktSichtbar=!!info.interview_id&&['offen','zwischenstand'].includes(info.status_runde1)&&!!(ivRead&&ivRead.ergebnis_text);
         const busy=!!ivBusy;
         const noDraft=!entwurfId||!draftPersisted;
         const fmtTs=v=>{if(!v)return '—';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('de-DE');};
@@ -4848,10 +4995,26 @@ function App(){
           <div style={card}>
             <div style={head}>2 · Aus Interview übernehmen</div>
             <div style={{fontSize:12,color:'#777',marginBottom:10,lineHeight:1.5}}>Füllt das Formular aus dem freigegebenen Interview vor. Es wird <strong>nichts gespeichert</strong> — erst „💾 Speichern“ schreibt den Entwurf. Vorschläge (Stil-Faktoren, emotionaler Charakter, Tag-Typen, Taxonomien, Zielgruppe) sind markiert und werden durch ✓ oder Ändern bestätigt.</div>
-            <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?<span>Interview wird übernommen<span className="ww-dots"></span> {ivElapsed}s</span>:'Aus Interview übernehmen'}</button>
-            {ivCacheAvail&&!importResult&&!pendingImport&&canImport&&<button type="button" disabled={busy} onClick={handleImportRestore} title="Letzte Import-Antwort aus diesem Browser erneut anbieten — ohne neuen Import-Lauf" style={{...btn(false,busy),marginLeft:8}}>Letzten Import wiederherstellen ({fmtTs(ivCacheAvail.at)})</button>}
-            {ivBusy==='import'&&<div style={{fontSize:12,color:'#777',marginTop:6}}>Der Import kann 1–3 Minuten dauern. Bitte die Seite nicht schließen.</div>}
-            {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
+            {/* v0.28.0 (Brief 2026-10-29, Teil 1–3): gespeicherter Vorschlag ohne Neulauf; „Neu importieren“ mit Rückfrage; Rückfallweg; Extrakt. */}
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              <button type="button" disabled={!canImport||busy||noDraft} onClick={handleImport} title={info.import_ergebnis_vorhanden?'Lädt den gespeicherten Vorschlag — kein neuer Import-Lauf':'Noch kein gespeichertes Ergebnis — startet den ersten Import (mehrere Minuten)'} style={btn(true,!canImport||busy||noDraft)}>{ivBusy==='import'?<span>Interview wird importiert<span className="ww-dots"></span> {ivElapsed}s</span>:ivBusy==='import_laden'?<span>Lade Import-Ergebnis<span className="ww-dots"></span></span>:'Aus Interview übernehmen'}</button>
+              {info.import_ergebnis_vorhanden&&canImport&&!ivConfirmNew&&<button type="button" disabled={busy||noDraft} onClick={()=>setIvConfirmNew(true)} title="Neuer Import-Lauf (mehrere Minuten), ersetzt das gespeicherte Ergebnis" style={btn(false,busy||noDraft)}>Neu importieren</button>}
+              {ivImportPending&&<button type="button" disabled={busy||noDraft} onClick={()=>ivCheckPending(null,false)} style={btn(false,busy||noDraft)}>{ivBusy==='import_warten'?<span>Warte auf Prüfung<span className="ww-dots"></span></span>:'Import-Ergebnis laden'}</button>}
+              {extraktSichtbar&&<button type="button" disabled={busy||noDraft} onClick={handleExtrakt} title="Startet WF-INT-EXTRAKT im Hintergrund (3–8 min) aus der freigegebenen Fassung" style={btn(false,busy||noDraft)}>{ivBusy==='extrakt'?'Starte Extrakt…':'Extrakt wiederholen'}</button>}
+              {canImport&&<span style={{fontSize:12,color:'#888'}}>{info.import_ergebnis_vorhanden?'Gespeichertes Import-Ergebnis vorhanden':'Noch kein gespeichertes Import-Ergebnis'}</span>}
+            </div>
+            {ivConfirmNew&&<div style={{marginTop:10,background:'#FFF4E5',border:'1px solid var(--coral)',borderRadius:6,padding:'10px 12px',fontSize:13}}>
+              <div style={{marginBottom:8}}>Neuer Import dauert <strong>mehrere Minuten</strong> und <strong>ersetzt das gespeicherte Ergebnis</strong> (nur wenn er erfolgreich ist). Seite während des Imports nicht schließen.</div>
+              <div style={{display:'flex',gap:8}}>
+                <button type="button" disabled={busy} onClick={runImport} style={btn(true,busy)}>Ja, neu importieren</button>
+                <button type="button" onClick={()=>setIvConfirmNew(false)} style={btn(false,false)}>Abbrechen</button>
+              </div>
+            </div>}
+            {ivBusy==='import'&&<div style={{fontSize:12,color:'#777',marginTop:6}}>Der Import kann mehrere Minuten dauern (Zeitlimit 11 min). Bitte die Seite nicht schließen und das Gerät nicht sperren.</div>}
+            {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>Übernahme aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
+            {ivMock&&role==='admin'&&<div style={{marginTop:8}}><select value={ivMockFail} onChange={e=>setIvMockFail(e.target.value)} style={{...iStyle,width:'auto',fontSize:12,background:'var(--yellow)'}} title="Nur Mock: nächsten Aufruf fehlschlagen lassen">
+              <option value="">Mock-Fehler: keiner</option><option value="abbruch">Mock: nächster Import bricht ab (Ergebnis gespeichert)</option><option value="503">Mock: nächster Aufruf 503 Sheets</option>
+            </select></div>}
             {importResult&&<div style={{marginTop:12}}>{renderImportPanel()}</div>}
           </div>
 
