@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.28.0 (L-WW-142 · Import-Ergebnis, Zeitlimits, Extrakt, Lesestöße)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.29.0 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -52,6 +52,28 @@ const lsSet=(k,v)=>{try{localStorage.setItem('ww_'+k,v);}catch{}};
 
 // ===================== UTILITY =====================
 const genId=()=>'ENT-'+new Date().toISOString().replace(/[-T:\.]/g,'').substring(0,14);
+// v0.29.0 (Nachtrag 2026-11-12 Punkt 4): clientseitige Vorprüfung Material wie die c-Grenzen
+// (WF9 upload_max_mb 10, upload_max_dateien 5; Endungen .txt/.docx/.pdf). Maßgeblich bleibt die Prüfung bei c.
+const IV_MAT={endungen:['txt','docx','pdf'],maxMb:10,maxDateien:5};
+const ivEndung=n=>{const m=/\.([^.]+)$/.exec(String(n||''));return m?m[1].toLowerCase():'';};
+function ivMaterialCheck(files,vorhanden){
+  const v=Array.isArray(vorhanden)?vorhanden:[];
+  if(v.length+files.length>IV_MAT.maxDateien) return 'Höchstens '+IV_MAT.maxDateien+' Dateien je Interview (vorhanden: '+v.length+', neu: '+files.length+').';
+  const namen=new Set(v.map(x=>String(x&&x.dateiname||'').toLowerCase()));
+  for(const f of files){
+    if(!IV_MAT.endungen.includes(ivEndung(f.name))) return '„'+f.name+'“: nur .txt, .docx oder .pdf.';
+    if((f.size||0)>IV_MAT.maxMb*1024*1024) return '„'+f.name+'“ ist größer als '+IV_MAT.maxMb+' MB.';
+    const k=String(f.name).toLowerCase();
+    if(namen.has(k)) return '„'+f.name+'“ ist bereits vorhanden.';
+    namen.add(k);
+  }
+  return '';
+}
+const ivFileToBase64=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>{const s=String(r.result||'');res(s.slice(s.indexOf(',')+1));};r.onerror=()=>rej(new Error('Datei nicht lesbar: '+f.name));r.readAsDataURL(f);});
+// Standardtitel „Einladung <Vorname> <TT.MM.JJJJ>“ (Grundbrief 3.1); erkennt ihn für den Mailversand (Vorschlag e: nicht nennen).
+const ivStandardTitel=(vorname,d=new Date())=>'Einladung '+String(vorname||'').trim()+' '+String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
+const ivIstStandardTitel=t=>/^Einladung .+ \d{2}\.\d{2}\.\d{4}$/.test(String(t||'').trim());
+const IV_QUELLE={betreiber:'vom Team hinterlegt',whisperer:'vom Whisperer'};
 const iStyle={width:'100%',padding:'8px 12px',border:'1px solid #D0D0D0',borderRadius:6,fontSize:13,fontFamily:'inherit',color:'var(--anthrazit)',background:'var(--white)',outline:'none',boxSizing:'border-box'};
 
 // ===================== v0.14.5: IMAGE PROCESSING =====================
@@ -1571,7 +1593,8 @@ function App(){
   // v0.14: Default-Tab beim Start = Reise-Eingabe (statt Whisperer-Profil),
   //        weil der Whisperer in der Regel sein Profil nur einmal pflegt
   //        und danach mit Reisen arbeitet.
-  const[tab,setTab]=useState('trip');
+  // v0.29.0: ?tab=interview (Sprung aus dem Einladeformular); sonst Reise-Eingabe.
+  const[tab,setTab]=useState(()=>{try{const t=new URLSearchParams(window.location.search).get('tab');return ['trip','tage','whisperer','interview'].includes(t)?t:'trip';}catch{return 'trip';}});
   const[openTags,setOpenTags]=useState({0:true});
   // v0.14: Default-Kollaps — pro Tab ist nur die jeweils erste Section offen (Anker für den User),
   //        alle weiteren Hauptsektionen zugeklappt.
@@ -1661,6 +1684,13 @@ function App(){
   // true  = bereits persistiert (nach erstem Save ODER nach hydrateFromDraft) → created_at WEGLASSEN,
   //         damit WF1 den Erstellungszeitpunkt nicht überschreibt (Schutz greift nur bei fehlendem Feld).
   const[draftPersisted,setDraftPersisted]=useState(false);
+  // v0.29.0 (L-WW-138/143, Brief 2026-10-30 Punkt 3): whisperer_id der Entwurfszeile, getrennt vom
+  // Whisperer-Formular (= Login-Profil bzw. manuell geladenes Profil). draftFromRow = Entwurf kam aus
+  // /load-draft (true) oder ist eine Neuanlage dieser Sitzung über „Neue Reise“ (false).
+  // Regel buildPayload: geladener Entwurf → whisperer_id der Zeile oder Feld weglassen, nie Login-Profil.
+  // Neuanlage → wie bisher Formular-Profil; nach dem ersten Speichern mit ID bleibt diese ID fest.
+  const[draftWhispererId,setDraftWhispererId]=useState('');
+  const[draftFromRow,setDraftFromRow]=useState(false);
   const[trip,setTrip]=useState({
     reise_ort:'', destination:'',
     region_sub:'', region_land:'',
@@ -2249,6 +2279,9 @@ function App(){
     setEntwurfId(d.entwurf_id);
     // v0.19.4 (B-2): geladener Entwurf existiert im Backend → alle folgenden Saves sind Updates.
     setDraftPersisted(true);
+    // v0.29.0 (Punkt 3): whisperer_id der geladenen Zeile merken; fehlt sie in der Antwort → '' → Feld wird weggelassen.
+    setDraftFromRow(true);
+    setDraftWhispererId(String(d.whisperer_id||'').trim());
     // v0.12: Status + Reject-Comment aus DB übernehmen. Backend liefert ggf. 'draft' (alt) → wir
     // halten den Wert 1:1 im State; STATUS_LABELS/STATUS_COLORS behandeln 'draft' als Alias für 'entwurf'.
     setTripStatus(d.status||'entwurf');
@@ -2845,7 +2878,11 @@ function App(){
   const[importUnsaved,setImportUnsaved]=useState(false);
   // v0.27.0 (Befund 4 / D1): Titel aus Interview nur als Vorschlag, wenn das Feld bereits gefüllt ist.
   const[titelVorschlag,setTitelVorschlag]=useState('');
-  const ivMockStore=useRef({});                   // Mock-Zustand je entwurf_id
+  // v0.29.0: Mock-Zustand je entwurf_id im sessionStorage, damit er „Entwurf öffnen“ (Seitenwechsel) übersteht.
+  // Enthält nur Mock-Daten (Mock-URLs ohne echten Token); Live-Antworten werden nicht abgelegt.
+  const IV_MOCK_SS='ww_ivMockStore';
+  const ivMockStore=useRef((()=>{try{return JSON.parse(sessionStorage.getItem(IV_MOCK_SS)||'{}')||{};}catch{return {};}})());
+  const ivMockPersist=()=>{try{sessionStorage.setItem(IV_MOCK_SS,JSON.stringify(ivMockStore.current));}catch{}};
 
   // Fehler mit HTTP-Status, Code und Hinweis (c: error ab v1.1, heute fehler).
   const ivErr=(r,status,what)=>{
@@ -2909,36 +2946,93 @@ function App(){
     whisperer_email:r.whisperer_email||'',
     modus:r.modus||'',
     // v0.28.0 (WF-INT v1.5): gespeicherter S2-Vorschlag vorhanden → Übernahme ohne neuen Import-Lauf.
-    import_ergebnis_vorhanden:r.import_ergebnis_vorhanden===true
+    import_ergebnis_vorhanden:r.import_ergebnis_vorhanden===true,
+    // v0.29.0 (L-WW-143): Versandstand, Materialliste mit Herkunft, Profil der Interview-Zeile.
+    einladung_gesendet_at:r.einladung_gesendet_at||'',
+    einladung_anzahl:Number(r.einladung_anzahl)||0,
+    material:Array.isArray(r.material)?r.material:null,
+    whisperer_id:r.whisperer_id||''
   });
 
   // ---------- Mock (nur bis c-Endpunkte stehen) ----------
+  // v0.29.0: Mock je entwurf_id (body.entwurf_id, sonst Suche über interview_id, sonst aktueller Entwurf).
+  // Neu: link_anzeigen, einladung_senden, material_hochladen, material_entfernen (Feldnamen = Kontrakt-Vorschlag b→c).
+  // _url hält nur die Mock-URL (kein echter Token) — der Live-Pfad legt den Link nirgends ab.
   const ivMockLink=(aktion,body)=>{
-    const st=ivMockStore.current[entwurfId]||null;
+    const S=ivMockStore.current;
+    const eid=(body&&body.entwurf_id)||Object.keys(S).find(k=>S[k]&&S[k].interview_id&&body&&S[k].interview_id===body.interview_id)||entwurfId;
+    const st=S[eid]||null;
     const plus60=()=>new Date(Date.now()+60*864e5).toISOString().slice(0,10);
     const fakeUrl=()=>'https://whisperedways.com/whisperer-gespraech/?t=MOCK-'+Math.random().toString(36).slice(2,10);
+    const pub=x=>{const o={};Object.keys(x).forEach(k=>{if(k!=='_url')o[k]=x[k];});return o;};
     if(aktion==='status'){
       if(!st) return {ok:false,error:'nicht_gefunden',_status:404};
-      return {ok:true,...st,import_ergebnis_vorhanden:!!st._s2};
+      return {ok:true,...pub(st),import_ergebnis_vorhanden:!!st._s2};
     }
     if(aktion==='erzeugen'){
       if(st&&st.interview_id) return {ok:false,error:'interview_existiert',interview_id:st.interview_id};
-      const n={interview_id:'INT-MOCK-'+Date.now(),status_runde1:'offen',token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60(),whisperer_name:body.whisperer_name,whisperer_email:body.whisperer_email,modus:body.modus};
-      ivMockStore.current[entwurfId]=n;
-      return {ok:true,...n,url:fakeUrl()};
+      const url=fakeUrl();
+      const n={interview_id:'INT-MOCK-'+Date.now(),entwurf_id:eid,status_runde1:'offen',token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60(),whisperer_name:body.whisperer_name,whisperer_email:body.whisperer_email,whisperer_id:body.whisperer_id||'',modus:body.modus,transkript_version:0,link_gespeichert:true,einladung_gesendet_at:'',einladung_anzahl:0,material:[],_url:url};
+      S[eid]=n;
+      return {ok:true,...pub(n),url};
     }
-    if(!st) return {ok:false,error:'Kein Link vorhanden.'};
-    if(aktion==='sperren'){if(st.token_status==='gesperrt')return {ok:true,...st,unveraendert:true};const n={...st,token_status:'gesperrt',token_effektiv:'gesperrt'};ivMockStore.current[entwurfId]=n;return {ok:true,...n};}
+    if(!st) return {ok:false,error:'Kein Link vorhanden.',_status:404};
+    if(aktion==='sperren'){if(st.token_status==='gesperrt')return {ok:true,...pub(st),unveraendert:true};const n={...st,token_status:'gesperrt',token_effektiv:'gesperrt'};S[eid]=n;return {ok:true,...pub(n)};}
     if(aktion==='erneuern'){
       if(st.token_status==='gesperrt'&&!body.neues_token) return {ok:false,error:'token_gesperrt',hinweis:'Gesperrter Link nur mit neuem Token nutzbar.'};
-      const n={...st,token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60()};ivMockStore.current[entwurfId]=n;
-      return body.neues_token?{ok:true,...n,url:fakeUrl()}:{ok:true,...n};
+      const n={...st,token_status:'aktiv',token_effektiv:'aktiv',token_gueltig_bis:plus60()};
+      if(body.neues_token){n._url=fakeUrl();n.link_gespeichert=true;}
+      S[eid]=n;
+      return body.neues_token?{ok:true,...pub(n),url:n._url}:{ok:true,...pub(n)};
     }
-    if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1};ivMockStore.current[entwurfId]=n;return {ok:true,...n,import_ergebnis_vorhanden:!!n._s2};}
+    if(aktion==='mock_status'){const n={...st,status_runde1:body.status_runde1,transkript_version:body.status_runde1==='offen'?(st.transkript_version||0):Math.max(1,st.transkript_version||0)};S[eid]=n;return {ok:true,...pub(n),import_ergebnis_vorhanden:!!n._s2};}
+    // Nur Mock: Bestandszeile ohne token_enc simulieren (Kriterium 4 Grundbrief).
+    if(aktion==='mock_altbestand'){const n={...st,_url:'',link_gespeichert:false};S[eid]=n;return {ok:true,...pub(n)};}
+    if(aktion==='link_anzeigen'){
+      if(!st._url) return {ok:false,error:'link_nicht_gespeichert',hinweis:'Link erneuern, das Gespräch läuft weiter',_status:409};
+      return {ok:true,interview_id:st.interview_id,entwurf_id:eid,chat_url:st._url,token_status:st.token_status,token_effektiv:st.token_effektiv,token_gueltig_bis:st.token_gueltig_bis};
+    }
+    if(aktion==='einladung_senden'){
+      if(!st._url) return {ok:false,error:'link_nicht_gespeichert',hinweis:'Link erneuern, das Gespräch läuft weiter',_status:409};
+      if(st.token_effektiv!=='aktiv') return {ok:false,error:'link_nicht_aktiv',hinweis:'Link ist '+st.token_effektiv+' — bitte erneuern.',_status:409};
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(st.whisperer_email||'')) return {ok:false,error:'email_fehlt',hinweis:'Keine gültige E-Mail in der Interview-Zeile.',_status:400};
+      const at=new Date().toISOString();
+      const n={...st,einladung_gesendet_at:at,einladung_anzahl:(Number(st.einladung_anzahl)||0)+1};S[eid]=n;
+      return {ok:true,gesendet_at:at,empfaenger:st.whisperer_email,einladung_anzahl:n.einladung_anzahl,mit_material_satz:(st.material||[]).some(m=>m.quelle==='betreiber')};
+    }
+    if(aktion==='material_hochladen'){
+      const d=body.datei||{};
+      const chk=ivMaterialCheck([{name:d.dateiname,size:Math.floor(String(d.inhalt_base64||'').length*3/4)}],(st.material||[]));
+      if(chk) return {ok:false,error:'datei_abgelehnt',hinweis:chk,_status:422};
+      if((st.transkript_version||0)>0&&st.modus==='a') return {ok:false,error:'modus_a_laufend',hinweis:'Das Gespräch läuft in Modus a — Material kann nicht mehr hinterlegt werden.',_status:409};
+      const n={...st,modus:(st.transkript_version||0)===0?'b':st.modus,material:[...(st.material||[]),{dateiname:d.dateiname,typ:d.typ,quelle:'betreiber',hochgeladen_at:new Date().toISOString()}]};
+      S[eid]=n;return {ok:true,...pub(n)};
+    }
+    if(aktion==='material_entfernen'){
+      const n={...st,material:(st.material||[]).filter(m=>m.dateiname!==body.dateiname)};S[eid]=n;return {ok:true,...pub(n)};
+    }
     // v0.28.0: extrakt_wiederholen (409 bei abgeschlossen/importiert oder ohne freigegebene Fassung).
     if(aktion==='extrakt_wiederholen'){
       if(['abgeschlossen','importiert'].includes(st.status_runde1)) return {ok:false,error:'extrakt_nicht_moeglich',hinweis:'Runde 1 ist bereits abgeschlossen oder importiert.',_status:409};
       return {ok:true,gestartet:true,hinweis:'[Mock] Extrakt läuft im Hintergrund (3–8 min).'};
+    }
+    return {ok:false,error:'Unbekannte Aktion'};
+  };
+  // v0.29.0: Mock Profil-Endpunkte (Kontrakt-Vorschlag: WF-INT profil_liste / profil_anlegen / profil_laden).
+  const ivMockProfil=(aktion,body)=>{
+    const S=ivMockStore.current;
+    if(!Array.isArray(S._profile)) S._profile=[
+      {whisperer_id:'WHISP-MOCK-0001',vorname:'Anna',nachname:'Beispiel',email:'anna@example.org',status:'entwurf',user_id:''},
+      {whisperer_id:'WHISP-MOCK-0002',vorname:'Bernd',nachname:'Muster',email:'bernd@example.org',status:'aktiv',user_id:'user_099'}];
+    const P=S._profile;
+    if(aktion==='profil_liste'){const q=String(body.suche||'').toLowerCase();return {ok:true,profile:P.filter(p=>!q||[p.vorname,p.nachname,p.email,p.whisperer_id].join(' ').toLowerCase().includes(q))};}
+    if(aktion==='profil_laden'){const p=P.find(x=>x.whisperer_id===body.whisperer_id);return p?{ok:true,profil:p}:{ok:false,error:'profil_nicht_gefunden',_status:404};}
+    if(aktion==='profil_anlegen'){
+      const em=String(body.email||'').trim().toLowerCase();
+      const dup=P.find(x=>String(x.email||'').toLowerCase()===em);
+      if(dup&&!body.trotz_duplikat) return {ok:false,error:'email_existiert',hinweis:'Zu dieser E-Mail gibt es bereits ein Profil.',vorhanden:dup,_status:409};
+      const p={whisperer_id:'WHISP-'+new Date().toISOString().replace(/[-T:\.]/g,'').substring(0,14),vorname:body.vorname,nachname:body.nachname,email:body.email,status:'entwurf',user_id:''};
+      P.push(p);return {ok:true,profil:p,whisperer_id:p.whisperer_id};
     }
     return {ok:false,error:'Unbekannte Aktion'};
   };
@@ -2973,7 +3067,10 @@ function App(){
         freitext_gesamtreise:'[Mock] Insider-Wissen zur Gesamtreise aus dem Interview.',aktivitaets_level:'moderat',zielgruppe:trip.zielgruppe||[],anreise:['Flug']},
       vorschlaege:{match_dimensions_json:{pace:2,comfort:4,authenticity:4},emo_tonalitaet:2,emo_persoenlichkeitsfit:['genießer'],trust_signale:[]},
       markierung:[{pfad:'params_json.tage[1].tag_typ',grund:'[Mock] Tag-Typ aus Tagesbeschreibung abgeleitet'},{pfad:'vorschlaege.emo_tonalitaet',grund:'[Mock] „eher ernste Gespräche“'},{pfad:'vorschlaege.match_dimensions_json.pace',grund:'[Mock] „gemächlich“'},{pfad:'hotels_pool_json[0].name',grund:'[Mock] Name sinngemäß'},{pfad:'params_json.tage[0].stopps[0].insider_tipps',grund:'[Mock] Tipp sinngemäß übernommen'},{pfad:'freitext_gesamtreise',grund:'[Mock] aus TEIL 1 verdichtet'},{pfad:'hotels_pool_json',grund:'[Mock] Hotel noch nicht gebunden'},{pfad:'mit_kindern',grund:'[Mock] Kinder im Interview erwähnt'}],
-      kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen'],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
+      kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen',
+        // v0.29.0 (Nachtrag Punkt 3): Abweichungs-Kontrollpunkte wie von c vorgeschlagen (Zeichenkette, bestehendes Format).
+        ...(tage.length&&tage.length!==n?['[Mock] Tage: Entwurf '+tage.length+', Interview '+n+' — Interview-Wert übernommen']:[]),
+        ...(trip.reise_ort?['[Mock] Titel/Ort: Entwurf „'+trip.reise_ort+'“, Interview „'+trip.reise_ort+' (Interview)“ — Interview-Wert übernommen']:[])],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
   };
   // v0.28.0: Mock speichert den S2-Vorschlag wie WF-INT-IMPORT v1.4 (nur bei Erfolg) und liefert ihn über import_ergebnis.
   const ivMockImportSave=()=>{
@@ -2991,15 +3088,27 @@ function App(){
   // Mock-Antwort in denselben Fehlerweg wie live bringen (404 → status).
   // v0.28.0: Mock-Fehler simulieren (nur Admin, Mock-Modus): 'abbruch' = importieren speichert, Antwort geht verloren;
   // '503' = nächster Aufruf liefert sheets_nicht_erreichbar.
-  const[ivMockFail,setIvMockFail]=useState('');
+  const[ivMockFail,setIvMockFailState]=useState('');
+  // v0.29.0: Ref-Spiegel, damit mehrstufige Abläufe (Einladen) den aktuellen Wert sehen; Fehler wirkt einmal.
+  // Neu: 'erzeugen' (nächstes erzeugen schlägt fehl), 'email_fehlt' (nächster Versand 400), 'upload' (nächster Upload 422),
+  // 'profil' (nächster Profil-Aufruf 500).
+  const ivMockFailRef=useRef('');
+  const setIvMockFail=v=>{ivMockFailRef.current=v;setIvMockFailState(v);};
+  const IV_PROFIL_AKTIONEN=['profil_liste','profil_anlegen','profil_laden'];
   const ivRun=async(action,payload)=>{
     if(!ivMock) return ivFetch(action,payload);
     await new Promise(z=>setTimeout(z,action==='importieren'?2000:200));
-    if(ivMockFail==='503'){setIvMockFail('');throw ivErr({ok:false,error:'sheets_nicht_erreichbar',hinweis:'Google Sheets ist gerade ueberlastet. Bitte in einer Minute erneut versuchen.'},503,action);}
-    if(action==='importieren'&&ivMockFail==='abbruch'){setIvMockFail('');ivMockImportSave();throw ivUnklar('Zeitlimit 660 s erreicht (importieren) [Mock]',660,{name:'AbortError',message:'Mock'});}
-    const r=action==='lesen'?ivMockLesen():action==='importieren'?ivMockImportSave():action==='import_ergebnis'?ivMockImportErgebnis():ivMockLink(action,payload);
+    const mf=ivMockFailRef.current;
+    if(mf==='503'){setIvMockFail('');throw ivErr({ok:false,error:'sheets_nicht_erreichbar',hinweis:'Google Sheets ist gerade ueberlastet. Bitte in einer Minute erneut versuchen.'},503,action);}
+    if(action==='importieren'&&mf==='abbruch'){setIvMockFail('');ivMockImportSave();ivMockPersist();throw ivUnklar('Zeitlimit 660 s erreicht (importieren) [Mock]',660,{name:'AbortError',message:'Mock'});}
+    if(action==='erzeugen'&&mf==='erzeugen'){setIvMockFail('');throw ivErr({ok:false,error:'mock_fehler',hinweis:'[Mock] erzeugen fehlgeschlagen'},500,action);}
+    if(action==='einladung_senden'&&mf==='email_fehlt'){setIvMockFail('');throw ivErr({ok:false,error:'email_fehlt',hinweis:'[Mock] Keine gültige E-Mail in der Interview-Zeile.'},400,action);}
+    if(action==='material_hochladen'&&mf==='upload'){setIvMockFail('');throw ivErr({ok:false,error:'upload_fehlgeschlagen',hinweis:'[Mock] Upload fehlgeschlagen'},500,action);}
+    if(IV_PROFIL_AKTIONEN.includes(action)&&mf==='profil'){setIvMockFail('');throw ivErr({ok:false,error:'mock_fehler',hinweis:'[Mock] Profil-Endpunkt fehlgeschlagen'},500,action);}
+    const r=action==='lesen'?ivMockLesen():action==='importieren'?ivMockImportSave():action==='import_ergebnis'?ivMockImportErgebnis():IV_PROFIL_AKTIONEN.includes(action)?ivMockProfil(action,payload||{}):ivMockLink(action,payload||{});
+    ivMockPersist();
     if(!r||r.ok!==true) throw ivErr(r,r&&r._status||409,action);
-    if(['status','erzeugen','sperren','erneuern','mock_status'].includes(action)){const st=ivMockStore.current[entwurfId];r.import_ergebnis_vorhanden=!!(st&&st._s2);}
+    if(['status','erzeugen','sperren','erneuern','mock_status'].includes(action)){const st=ivMockStore.current[(payload&&payload.entwurf_id)||entwurfId];r.import_ergebnis_vorhanden=!!(st&&st._s2);}
     return r;
   };
   const ivLinkAction=async(aktion,extra={})=>{
@@ -3016,15 +3125,15 @@ function App(){
     if(aktion!=='status') setIvUrl('');
     try{
       let body;
-      if(aktion==='erzeugen') body={entwurf_id:entwurfId,whisperer_name:ivForm.whisperer_name.trim(),whisperer_email:ivForm.whisperer_email.trim(),modus:ivForm.modus};
+      if(aktion==='erzeugen') body={entwurf_id:entwurfId,whisperer_name:ivForm.whisperer_name.trim(),whisperer_email:ivForm.whisperer_email.trim(),modus:ivForm.modus,...(draftWhispererId?{whisperer_id:draftWhispererId}:{})};
       else if(aktion==='status') body={entwurf_id:entwurfId};
-      else if(aktion==='mock_status') body={...extra};
+      else if(aktion==='mock_status'||aktion==='mock_altbestand') body={...extra};
       else body={interview_id:iid,...(extra.neues_token?{neues_token:true}:{})};
       const r=await ivRun(aktion,body);
       setIvInfo(ivPickInfo(r));
       if(r.url&&(aktion==='erzeugen'||aktion==='erneuern')) setIvUrl(r.url);
-      if(aktion==='erzeugen') setIvMsg({kind:'ok',text:'Link erzeugt. Die URL wird nur jetzt angezeigt — bitte kopieren.'});
-      else if(aktion==='erneuern') setIvMsg({kind:'ok',text:extra.neues_token?'Neuer Link erzeugt — die bisherige URL ist ungültig. Neue URL nur jetzt sichtbar.':'Laufzeit verlängert. Die bisherige URL bleibt gültig.'});
+      if(aktion==='erzeugen') setIvMsg({kind:'ok',text:'Link erzeugt. Später wieder abrufbar über „Link anzeigen“.'});
+      else if(aktion==='erneuern') setIvMsg({kind:'ok',text:extra.neues_token?'Neuer Link erzeugt — die bisherige URL ist ungültig.':'Laufzeit verlängert. Die bisherige URL bleibt gültig.'});
       else if(aktion==='sperren') setIvMsg({kind:r.unveraendert?'info':'ok',text:r.unveraendert?'Link war bereits gesperrt.':'Link gesperrt.'});
     }catch(e){
       if(aktion==='status'&&(e.status===404||e.code==='nicht_gefunden')){setIvInfo(null);}
@@ -3037,6 +3146,207 @@ function App(){
     }
     setIvBusy('');
   };
+  // ---------- v0.29.0 (L-WW-143): Link anzeigen, Einladung senden, Material vorab ----------
+  const ivSendErrText=e=>e.code==='link_nicht_aktiv'?'Versand nicht möglich: Link ist nicht aktiv — Link erneuern.'
+    :e.code==='link_nicht_gespeichert'?'Versand nicht möglich: Link nicht gespeichert — Link erneuern, das Gespräch läuft weiter.'
+    :e.code==='email_fehlt'?'Versand nicht möglich: keine gültige E-Mail in der Interview-Zeile'+(e.data&&e.data.hinweis?' — '+String(e.data.hinweis).replace(/\.$/,''):'')+'.'
+    :'Versand fehlgeschlagen: '+e.message;
+  const ivMatErrText=e=>e.code==='modus_a_laufend'?'Das Gespräch läuft bereits in Modus a — Material kann nicht mehr hinterlegt werden.':'Material: '+e.message;
+  const ivShowLink=async()=>{
+    if(!canManage||!entwurfId||!draftPersisted) return;
+    setIvBusy('link_anzeigen');setIvMsg(null);setIvUrl('');
+    try{
+      const r=await ivRun('link_anzeigen',{entwurf_id:entwurfId,...(ivInfo&&ivInfo.interview_id?{interview_id:ivInfo.interview_id}:{})});
+      if(!r.chat_url) throw ivErr({...r,ok:false,error:r.error||'link_anzeigen: Antwort ohne chat_url'},0,'link_anzeigen');
+      setIvUrl(r.chat_url);
+      const eff=r.token_effektiv||r.token_status||'';
+      setIvInfo(i=>({...(i||{}),token_status:r.token_status||(i&&i.token_status)||'',token_effektiv:eff||(i&&i.token_effektiv)||'',token_gueltig_bis:r.token_gueltig_bis||(i&&i.token_gueltig_bis)||''}));
+      if(eff&&eff!=='aktiv') setIvMsg({kind:'info',text:'Link ist '+eff+' — der Whisperer kann ihn so nicht öffnen. Bitte erneuern.'});
+    }catch(e){
+      if(e.code==='link_nicht_gespeichert') setIvMsg({kind:'info',text:'Link erneuern, das Gespräch läuft weiter. (Link aus der Zeit vor der Link-Speicherung — „Neuen Link erzeugen“ liefert einen wieder abrufbaren Link.)'});
+      else setIvMsg({kind:'err',text:e.message});
+    }
+    setIvBusy('');
+  };
+  const ivSendInvite=async()=>{
+    const iid=ivInfo&&ivInfo.interview_id;
+    if(!canManage||!iid) return;
+    const mail=(ivInfo.whisperer_email||'').trim();
+    const titel=(trip.reise_ort||'').trim();
+    if(!confirm('Mail an '+(mail||'(keine E-Mail in der Interview-Zeile)')+' für die Reise „'+titel+'“ senden?')) return;
+    setIvBusy('senden');setIvMsg(null);
+    try{
+      const r=await ivRun('einladung_senden',{interview_id:iid,entwurf_id:entwurfId,reisetitel_nennen:!!titel&&!ivIstStandardTitel(titel)});
+      setIvInfo(i=>({...i,einladung_gesendet_at:r.gesendet_at||new Date().toISOString(),einladung_anzahl:Number(r.einladung_anzahl)||((Number(i&&i.einladung_anzahl)||0)+1)}));
+      setIvMsg({kind:'ok',text:'Einladung an '+(r.empfaenger||mail)+' gesendet.'});
+    }catch(e){setIvMsg({kind:'err',text:ivSendErrText(e)});}
+    setIvBusy('');
+  };
+  // Material: je Datei ein Aufruf material_hochladen (Kontrakt-Vorschlag). Gemeinsam für Tab und Einladeformular.
+  const ivUploadFiles=async(iid,eid,files)=>{
+    let last=null;
+    for(const f of files){
+      try{
+        const b64=await ivFileToBase64(f);
+        last=await ivRun('material_hochladen',{interview_id:iid,entwurf_id:eid,datei:{dateiname:f.name,typ:ivEndung(f.name),mime:f.type||'',inhalt_base64:b64}});
+      }catch(e){return {last,error:ivMatErrText(e),fehlerDatei:f.name};}
+    }
+    return {last,error:''};
+  };
+  const ivMaterialList=()=>(ivInfo&&Array.isArray(ivInfo.material))?ivInfo.material:((ivRead&&Array.isArray(ivRead.material))?ivRead.material:[]);
+  const ivApplyMat=r=>{if(!r)return;setIvInfo(i=>({...(i||{}),...(Array.isArray(r.material)?{material:r.material}:{}),...(r.modus?{modus:r.modus}:{})}));};
+  const ivUploadMaterial=async(fileList)=>{
+    const files=[...(fileList||[])];
+    const iid=ivInfo&&ivInfo.interview_id;
+    if(!canManage||!files.length||!iid) return;
+    const chk=ivMaterialCheck(files,ivMaterialList());
+    if(chk){setIvMsg({kind:'err',text:chk});return;}
+    setIvBusy('material');setIvMsg(null);
+    const r=await ivUploadFiles(iid,entwurfId,files);
+    ivApplyMat(r.last);
+    setIvMsg(r.error?{kind:'err',text:r.error+(r.fehlerDatei?' („'+r.fehlerDatei+'“)':'')}:{kind:'ok',text:files.length===1?'Datei hinterlegt.':files.length+' Dateien hinterlegt.'});
+    setIvBusy('');
+  };
+  const ivRemoveMaterial=async(name)=>{
+    const iid=ivInfo&&ivInfo.interview_id;
+    if(!canManage||!iid) return;
+    if(!confirm('„'+name+'“ entfernen?\n\nDie Datei wird ab der nächsten Nachricht nicht mehr verwendet. Bereits Besprochenes bleibt im Gespräch.')) return;
+    setIvBusy('material');setIvMsg(null);
+    try{const r=await ivRun('material_entfernen',{interview_id:iid,entwurf_id:entwurfId,dateiname:name});ivApplyMat(r);if(!Array.isArray(r.material))setIvInfo(i=>({...i,material:ivMaterialList().filter(m=>m.dateiname!==name)}));setIvMsg({kind:'ok',text:'„'+name+'“ entfernt.'});}
+    catch(e){setIvMsg({kind:'err',text:ivMatErrText(e)});}
+    setIvBusy('');
+  };
+  // Profil der Entwurfszeile (nicht Login) für Hinweis und Vorbelegung der Link-Felder (Grundbrief 3.2).
+  const[draftProfil,setDraftProfil]=useState(null);   // {whisperer_id,vorname,nachname,email} | {error}
+  useEffect(()=>{
+    if(tab!=='interview'||!canManage||!draftWhispererId){if(!draftWhispererId)setDraftProfil(null);return;}
+    if(draftProfil&&draftProfil.whisperer_id===draftWhispererId&&!draftProfil.error) return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const r=await ivRun('profil_laden',{whisperer_id:draftWhispererId});
+        const p=r.profil||r;
+        if(cancelled) return;
+        setDraftProfil({whisperer_id:draftWhispererId,vorname:p.vorname||'',nachname:p.nachname||'',email:p.email||''});
+        setIvForm(f=>({...f,whisperer_name:f.whisperer_name||p.vorname||'',whisperer_email:f.whisperer_email||p.email||''}));
+      }catch(e){if(!cancelled)setDraftProfil({whisperer_id:draftWhispererId,error:e.message});}
+    })();
+    return()=>{cancelled=true;};
+  // eslint-disable-next-line
+  },[tab,canManage,draftWhispererId,ivMock]);
+
+  // ---------- v0.29.0 (L-WW-143): Formular „Whisperer einladen“ ----------
+  // Ablauf: Profil (ggf. anlegen) → /save-draft Minimal-Entwurf → erzeugen → material_hochladen → ggf. einladung_senden.
+  // Ab angelegtem Entwurf kein erneutes „Einladen“ (kein zweiter Entwurf); Fehler danach → Wiederholung im Tab „Interview“.
+  const INV_LEER={art:'liste',suche:'',auswahl:null,neu:{vorname:'',nachname:'',email:''},anrede:'',anredeGeaendert:false,modus:'a',titel:'',mail:true,dateien:[]};
+  const[invOpen,setInvOpen]=useState(false);
+  const[inv,setInv]=useState(INV_LEER);
+  const[invProfile,setInvProfile]=useState({loading:false,list:[],error:''});
+  const[invDup,setInvDup]=useState(null);
+  const[invLauf,setInvLauf]=useState(null);   // {schritte:[{k,label,st,text}], entwurf_id, url, laeuft, angelegt}
+  const invLock=useRef(false);
+  const invLoadProfiles=async()=>{
+    setInvProfile({loading:true,list:[],error:''});
+    try{const r=await ivRun('profil_liste',{});setInvProfile({loading:false,list:Array.isArray(r.profile)?r.profile:[],error:''});}
+    catch(e){setInvProfile({loading:false,list:[],error:e.message});}
+  };
+  const openInvite=()=>{if(!canManage)return;setInv(INV_LEER);setInvDup(null);setInvLauf(null);invLock.current=false;setInvOpen(true);invLoadProfiles();};
+  const closeInvite=()=>{if(invLauf&&invLauf.laeuft)return;setInvOpen(false);};
+  const invVorname=()=>inv.art==='neu'?inv.neu.vorname.trim():((inv.auswahl&&inv.auswahl.vorname)||'').trim();
+  const invEmail=()=>inv.art==='neu'?inv.neu.email.trim():((inv.auswahl&&inv.auswahl.email)||'').trim();
+  const invPick=p=>{setInvDup(null);setInv(v=>({...v,art:'liste',auswahl:p,anrede:v.anredeGeaendert?v.anrede:(p.vorname||'')}));};
+  const invSetNeu=(k,val)=>setInv(v=>{const neu={...v.neu,[k]:val};return {...v,neu,anrede:(k==='vorname'&&!v.anredeGeaendert)?val:v.anrede};});
+  const invSetFiles=fl=>{const files=[...(fl||[])];setInv(v=>({...v,dateien:files,modus:files.length?'b':v.modus}));};
+  const invValidate=()=>{
+    const m=[];const em=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(inv.art==='liste'&&!inv.auswahl) m.push('Profil auswählen oder „Neues Profil“ anlegen');
+    if(inv.art==='neu'){if(!inv.neu.vorname.trim())m.push('Vorname');if(!inv.neu.nachname.trim())m.push('Nachname');if(!em.test(inv.neu.email.trim()))m.push('gültige E-Mail');}
+    if(inv.art==='liste'&&inv.auswahl&&!em.test(invEmail())) m.push('Das gewählte Profil hat keine gültige E-Mail');
+    if(!inv.anrede.trim()) m.push('Anrede im Chat');
+    if(!['a','b'].includes(inv.modus)) m.push('Modus');
+    if(inv.dateien.length){const c=ivMaterialCheck(inv.dateien,[]);if(c)m.push(c);}
+    return m;
+  };
+  const runInvite=async()=>{
+    if(!canManage||invLock.current) return;
+    if(invLauf&&invLauf.angelegt) return;   // Entwurf existiert schon → kein zweiter
+    const fehlt=invValidate();
+    if(fehlt.length){setInvLauf({schritte:[],fehler:'Bitte ergänzen: '+fehlt.join(' · ')});return;}
+    invLock.current=true;
+    const titel=inv.titel.trim()||ivStandardTitel(invVorname());
+    const sch=[...(inv.art==='neu'?[{k:'profil',label:'Profil anlegen'}]:[]),{k:'entwurf',label:'Entwurf anlegen'},{k:'link',label:'Link erzeugen'},...(inv.dateien.length?[{k:'material',label:'Material hinterlegen ('+inv.dateien.length+')'}]:[]),...(inv.mail?[{k:'mail',label:'Einladung per Mail senden'}]:[])].map(x=>({...x,st:'offen',text:''}));
+    let lauf={schritte:sch,entwurf_id:'',url:'',laeuft:true,angelegt:false,titel,email:invEmail()};
+    const upd=(k,st,text)=>{lauf={...lauf,schritte:lauf.schritte.map(x=>x.k===k?{...x,st,text:text||''}:x)};setInvLauf(lauf);};
+    const ende=(extra)=>{lauf={...lauf,...extra,laeuft:false};setInvLauf(lauf);invLock.current=false;};
+    setInvLauf(lauf);
+    // 1) Profil
+    let profil=inv.art==='neu'?null:inv.auswahl;
+    if(inv.art==='neu'){
+      upd('profil','laeuft');
+      try{
+        const r=await ivRun('profil_anlegen',{vorname:inv.neu.vorname.trim(),nachname:inv.neu.nachname.trim(),email:inv.neu.email.trim()});
+        profil=r.profil||{whisperer_id:r.whisperer_id,vorname:inv.neu.vorname.trim(),nachname:inv.neu.nachname.trim(),email:inv.neu.email.trim()};
+        if(!profil.whisperer_id) throw ivErr({ok:false,error:'Antwort ohne whisperer_id'},0,'profil_anlegen');
+        upd('profil','ok',profil.whisperer_id);
+        // Profil existiert jetzt → bei erneutem Klick nicht noch einmal anlegen.
+        setInv(v=>({...v,art:'liste',auswahl:profil}));
+        setInvProfile(pp=>({...pp,list:[profil,...pp.list.filter(x=>x.whisperer_id!==profil.whisperer_id)]}));
+      }catch(e){
+        if(e.code==='email_existiert'&&e.data&&e.data.vorhanden){setInvDup(e.data.vorhanden);upd('profil','fehler','E-Mail bereits vergeben — vorhandenes Profil verwenden?');}
+        else upd('profil','fehler',e.message);
+        return ende({});
+      }
+    }
+    const wid=profil.whisperer_id;
+    // 2) Minimal-Entwurf über /save-draft (e-D181, e-D224.1). [UNSICHER] Feldumfang bis Mindest-Payload von c.
+    const eid=genId();
+    upd('entwurf','laeuft');
+    try{
+      const payload={entwurf_id:eid,created_at:new Date().toISOString(),status:'entwurf',user_id:currentUserId,user_name:currentUserName,whisperer_id:wid,quelltext:'ReiseOrt: '+titel,params:{reise_ort:titel,tage:[]}};
+      const r=await apiCall('POST','/save-draft',payload);
+      if(!r||r.error||r.success===false) throw new Error((r&&r.error)||'Speichern fehlgeschlagen');
+      lauf={...lauf,entwurf_id:eid,angelegt:true};
+      upd('entwurf','ok',eid);
+    }catch(e){upd('entwurf','fehler',e.message);return ende({});}
+    // 3) Link
+    upd('link','laeuft');
+    let interviewId='';
+    try{
+      const r=await ivRun('erzeugen',{entwurf_id:eid,whisperer_name:inv.anrede.trim(),whisperer_email:invEmail(),modus:inv.modus,whisperer_id:wid});
+      interviewId=r.interview_id||'';
+      lauf={...lauf,url:r.url||''};
+      upd('link','ok',interviewId);
+    }catch(e){
+      upd('link','fehler',e.message+' — Entwurf ist angelegt; Link im Tab „Interview“ erzeugen.');
+      lauf.schritte.filter(x=>x.st==='offen').forEach(x=>upd(x.k,'uebersprungen'));
+      return ende({});
+    }
+    // 4) Material (vor der Mail, damit der Material-Satz in der Mail steht)
+    if(inv.dateien.length){
+      upd('material','laeuft');
+      const r=await ivUploadFiles(interviewId,eid,inv.dateien);
+      if(r.error){
+        upd('material','fehler',r.error+(r.fehlerDatei?' („'+r.fehlerDatei+'“)':'')+' — Wiederholung im Tab „Interview“.');
+        if(inv.mail) upd('mail','uebersprungen','keine Mail ohne vollständiges Material');
+        return ende({});
+      }
+      upd('material','ok');
+    }
+    // 5) Mail
+    if(inv.mail){
+      upd('mail','laeuft');
+      try{
+        const r=await ivRun('einladung_senden',{interview_id:interviewId,entwurf_id:eid,reisetitel_nennen:!ivIstStandardTitel(titel)});
+        upd('mail','ok','Einladung an '+(r.empfaenger||invEmail())+' gesendet');
+      }catch(e){upd('mail','fehler',ivSendErrText(e)+' Versand im Tab „Interview“ wiederholbar.');}
+    }
+    return ende({});
+  };
+  const openInvitedDraft=()=>{
+    if(!invLauf||!invLauf.entwurf_id) return;
+    window.location.href=window.location.pathname+'?entwurf_id='+encodeURIComponent(invLauf.entwurf_id)+'&tab=interview';
+  };
+
   // ---------- B3: Lesefassung ----------
   const ivLoadRead=async()=>{
     if(!entwurfId||!draftPersisted) return;
@@ -3407,6 +3717,16 @@ function App(){
     </div>;
   };
 
+  // ============== v0.29.0: whisperer_id für /save-draft (Brief e→b 2026-10-30 Punkt 3) ==============
+  // Geladener Entwurf (draftFromRow): whisperer_id der Zeile, sonst undefined (WF1 lässt die Spalte unverändert).
+  // Neuanlage über „Neue Reise“: einmal gesendete ID bleibt fest; bis dahin Formular-Profil (heutiges Verhalten).
+  const payloadWhispererId=()=>{
+    if(draftFromRow) return draftWhispererId||undefined;
+    return draftWhispererId||(whisperer.whisperer_id||'').trim()||undefined;
+  };
+  // Nach erfolgreichem /save-draft: gesendete ID als Entwurfs-ID übernehmen (nur Neuanlage relevant).
+  const notePayloadSaved=(p)=>{if(p&&p.whisperer_id&&!draftWhispererId) setDraftWhispererId(p.whisperer_id);};
+
   // ============== BUILD PAYLOAD ==============
   const buildPayload=()=>{
     const params={
@@ -3493,7 +3813,8 @@ function App(){
       // der Reise (Spec Reisen_Roh v2 §3.1), NICHT der Session-User. Quelle: whisperer.whisperer_id,
       // gesetzt nach erfolgreichem /whisperer-load bzw. /whisperer-save. Ohne gespeichertes Profil
       // (leer) → Feld weglassen (undefined), damit NICHT wieder der Session-User einläuft.
-      whisperer_id:(whisperer.whisperer_id||'').trim()||undefined,
+      // v0.29.0 (Punkt 3, L-WW-138): Quelle siehe payloadWhispererId() — bei geladenem Entwurf nie das Login-Profil.
+      whisperer_id:payloadWhispererId(),
       reise_format:trip.reise_format,
       reise_thema:trip.reise_thema,
       reise_charakter:trip.reise_charakter,
@@ -3536,6 +3857,7 @@ function App(){
       else{
         setSaveStatus('success');
         setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
+        notePayloadSaved(payload);  // v0.29.0 (Punkt 3)
         // v0.27.0 (B1): übernommene Interview-Daten sind gespeichert → Warnung und Zwischenspeicher weg.
         if(importUnsaved){setImportUnsaved(false);}
         // v0.26.1 (B2.4): offene Interview-Markierungen nur als Hinweis zählen (keine Sperre).
@@ -3584,7 +3906,8 @@ function App(){
     // v0.13: Bug-Fix — Whisperer-Profil muss tatsächlich in der DB existieren, nicht nur im UI-State.
     // whisperer_id wird nur gesetzt, wenn /whisperer-load oder /whisperer-save erfolgreich war.
     // Ohne diesen Check würde Übergabe mit getippten, aber nicht persistierten Stammdaten gelingen.
-    if(!whisperer.whisperer_id||!whisperer.whisperer_id.trim()) missing.push('Whisperer-Profil noch nicht gespeichert — bitte im Whisperer-Tab auf „💾 Profil speichern" klicken');
+    // v0.29.0 (Punkt 3): geprüft wird die ID, die /save-draft tatsächlich sendet bzw. die die Zeile trägt.
+    if(!payloadWhispererId()) missing.push('Whisperer-Profil noch nicht gespeichert — bitte im Whisperer-Tab auf „💾 Profil speichern" klicken');
     if(!whisperer.vorname||!whisperer.vorname.trim()) missing.push('Vorname (Whisperer-Tab)');
     if(!whisperer.nachname||!whisperer.nachname.trim()) missing.push('Nachname (Whisperer-Tab)');
     if(!whisperer.email||!whisperer.email.trim()) missing.push('E-Mail (Whisperer-Tab)');
@@ -3656,6 +3979,7 @@ function App(){
         return;
       }
       setDraftPersisted(true);  // v0.19.4 (B-2): Transfer-Save persistiert ebenfalls
+      notePayloadSaved(savePayload);  // v0.29.0 (Punkt 3)
       // 2) Status-Wechsel (ASCII-Kontrakt: new_status='uebergeben')
       setTransferMsg('Übergebe an Master/Admin…');
       const statusRes=await apiCall('POST','/update-status',{
@@ -4079,7 +4403,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.28.0 (L-WW-142 · Import-Ergebnis, Zeitlimits, Extrakt, Lesestöße)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.0 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -4966,14 +5290,17 @@ function App(){
               {hasLink&&<div><span style={{color:'#888'}}>Vereinbarung:</span> <strong>{info.vereinbarung_bestaetigt_at?('bestätigt '+fmtTs(info.vereinbarung_bestaetigt_at)+(info.vereinbarung_version?' ('+info.vereinbarung_version+')':'')):'noch nicht bestätigt'}</strong></div>}
               {hasLink&&<div><span style={{color:'#888'}}>Whisperer:</span> <strong>{info.whisperer_name||'—'}</strong> {info.whisperer_email&&<span style={{color:'#888'}}>({info.whisperer_email})</span>} · Modus {info.modus||'—'}</div>}
             </div>
+            {/* v0.29.0 (Grundbrief 3.2): Profil der Entwurfszeile (whisperer_id + Name), nicht das Login-Profil. */}
+            <div style={{fontSize:12,color:'#777',marginBottom:10}}>Whisperer-Profil des Entwurfs: <strong>{draftWhispererId||'—'}</strong>{draftProfil&&!draftProfil.error&&(draftProfil.vorname||draftProfil.nachname)?' ('+[draftProfil.vorname,draftProfil.nachname].filter(Boolean).join(' ')+(draftProfil.email?', '+draftProfil.email:'')+')':''}{draftProfil&&draftProfil.error&&<span style={{color:'var(--red)'}}> — Profil nicht ladbar: {draftProfil.error}</span>}{!draftWhispererId&&<span> — der Entwurf trägt keine <code>whisperer_id</code></span>}</div>
             {!hasLink&&<div className="field-row" style={{display:'flex',flexWrap:'wrap',gap:12}}>
-              <div style={{flex:'1 1 100%',fontSize:12,color:'#777',marginTop:-4}}>Name und E-Mail der Person, die das Interview führt — nicht automatisch aus dem Login. Whisperer-Profil des Entwurfs: <strong>{whisperer.whisperer_id||'—'}</strong>{(whisperer.vorname||whisperer.nachname)?' ('+[whisperer.vorname,whisperer.nachname].filter(Boolean).join(' ')+')':''}</div>
-              <Field label="Name des Whisperers" badge="PFLICHT" half><TI name="ww-iv-whisperer-name" autoComplete="off" placeholder="Vorname Nachname" value={ivForm.whisperer_name} onChange={v=>setIvForm(f=>({...f,whisperer_name:v}))}/></Field>
+              <div style={{flex:'1 1 100%',fontSize:12,color:'#777',marginTop:-4}}>Vorbelegt aus dem Profil des Entwurfs (nicht aus dem Login), änderbar.</div>
+              <Field label="Anrede im Chat (Name)" badge="PFLICHT" half><TI name="ww-iv-whisperer-name" autoComplete="off" placeholder="Vorname Nachname" value={ivForm.whisperer_name} onChange={v=>setIvForm(f=>({...f,whisperer_name:v}))}/></Field>
               <Field label="E-Mail des Whisperers" badge="PFLICHT" half><TI name="ww-iv-whisperer-email" autoComplete="off" placeholder="name@beispiel.de" value={ivForm.whisperer_email} onChange={v=>setIvForm(f=>({...f,whisperer_email:v}))}/></Field>
               <Field label="Modus" badge="PFLICHT"><Radio name="iv_modus" value={ivForm.modus} onChange={v=>setIvForm(f=>({...f,modus:v}))} options={[{value:'a',label:'a — Interview ohne Material'},{value:'b',label:'b — mit Upload (Text, Word, PDF)'}]}/></Field>
             </div>}
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               {!hasLink&&<button type="button" disabled={busy||noDraft} onClick={()=>ivLinkAction('erzeugen')} style={btn(true,busy||noDraft)}>{ivBusy==='erzeugen'?'Erzeuge…':'Link erzeugen'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft} onClick={ivShowLink} title="Gespeicherten Link abrufen (nur Anzeige)" style={btn(true,busy||noDraft)}>{ivBusy==='link_anzeigen'?'Lade Link…':'Link anzeigen'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} onClick={()=>ivLinkAction('sperren')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='sperren'?'Sperre…':'Link sperren'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} title={info.token_effektiv==='gesperrt'?'Gesperrter Link: nur „Neuen Link erzeugen“':'Gleiche URL, +60 Tage'} onClick={()=>ivLinkAction('erneuern')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='erneuern'?'Verlängere…':'Laufzeit verlängern'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft} title="Neue URL; die bisherige ist danach ungültig" onClick={()=>ivLinkAction('erneuern',{neues_token:true})} style={btn(false,busy||noDraft)}>Neuen Link erzeugen</button>}
@@ -4981,15 +5308,38 @@ function App(){
               {ivMock&&hasLink&&<select value={info.status_runde1||''} onChange={e=>ivLinkAction('mock_status',{status_runde1:e.target.value})} style={{...iStyle,width:'auto',fontSize:12,background:'var(--yellow)'}} title="Nur Mock: Runde-1-Status simulieren">
                 {['offen','zwischenstand','abgeschlossen','importiert'].map(x=><option key={x} value={x}>Mock: {x}</option>)}
               </select>}
+              {ivMock&&hasLink&&<button type="button" onClick={()=>ivLinkAction('mock_altbestand')} style={{...btn(false,false),background:'var(--yellow)'}} title="Nur Mock: Zeile ohne token_enc (Bestand vor dem Bau)">Mock: Altbestand</button>}
             </div>
             {ivUrl&&<div style={{marginTop:12,background:'var(--white)',border:'2px solid var(--sage)',borderRadius:6,padding:'10px 12px'}}>
-              <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:6}}>Link für den Whisperer — wird nur jetzt angezeigt und ist danach nicht mehr abrufbar</div>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:6}}>Link für den Whisperer{info.token_effektiv?' — '+(TK[info.token_effektiv]||info.token_effektiv)+(info.token_gueltig_bis?', gültig bis '+fmtTs(info.token_gueltig_bis):''):''} <span style={{fontWeight:400,color:'#888'}}>(nur Anzeige, wird im Browser nicht gespeichert)</span></div>
               <div style={{display:'flex',gap:8,alignItems:'center'}}>
                 <input readOnly value={ivUrl} onFocus={e=>e.target.select()} style={{...iStyle,fontFamily:'monospace',fontSize:12}}/>
                 <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(ivUrl);setIvMsg({kind:'ok',text:'Link kopiert.'});}catch{setIvMsg({kind:'err',text:'Kopieren nicht möglich — bitte manuell markieren und kopieren.'});}}} style={btn(true,false)}>Kopieren</button>
               </div>
             </div>}
+            {/* v0.29.0 (Nachtrag 3.2): Einladung per Mail */}
+            {hasLink&&(()=>{const aktiv=info.token_effektiv==='aktiv';const n=Number(info.einladung_anzahl)||0;return <div style={{marginTop:14,paddingTop:12,borderTop:'1px solid #E0E0E0',display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+              <button type="button" disabled={busy||noDraft||!aktiv} onClick={ivSendInvite} title={aktiv?'Mail mit diesem Link an '+(info.whisperer_email||'—'):'Link erneuern'} style={btn(true,busy||noDraft||!aktiv)}>{ivBusy==='senden'?'Sende…':(n>0?'Erneut senden':'Einladung senden')}</button>
+              <span style={{fontSize:12,color:'#777'}}>{info.einladung_gesendet_at?('zuletzt gesendet '+fmtTs(info.einladung_gesendet_at)+' ('+n+'×)'):'noch nicht per Mail gesendet'} · an {info.whisperer_email||'—'}</span>
+              {!aktiv&&<span style={{fontSize:12,color:'var(--red)'}}>Link ist {TK[info.token_effektiv]||info.token_effektiv||'nicht aktiv'} — Link erneuern.</span>}
+            </div>;})()}
           </div>
+
+          {/* v0.29.0 (Nachtrag 3.4): Material vorab */}
+          {hasLink&&(()=>{const mat=ivMaterialList();return <div style={card}>
+            <div style={head}>Material</div>
+            <div style={{fontSize:12,color:'#777',marginBottom:8}}>.txt, .docx, .pdf · max. {IV_MAT.maxMb} MB je Datei · max. {IV_MAT.maxDateien} Dateien je Interview (Team und Whisperer zusammen). Hochladen setzt vor Gesprächsbeginn Modus b.</div>
+            {mat.length===0&&<div style={{fontSize:13,color:'#888',marginBottom:8}}>Noch kein Material.</div>}
+            {mat.length>0&&<table style={{width:'100%',fontSize:13,borderCollapse:'collapse',marginBottom:10}}><tbody>{mat.map((m,i)=>{const nm=(m&&(m.dateiname||m.name))||'';return <tr key={nm+i} style={{borderBottom:'1px solid #ECECEC'}}>
+              <td style={{padding:'4px 6px'}}>{nm}{m&&m.typ?<span style={{color:'#888'}}> ({m.typ})</span>:null}</td>
+              <td style={{padding:'4px 6px',color:'#777'}}>{IV_QUELLE[(m&&m.quelle)||'whisperer']||m.quelle}</td>
+              <td style={{padding:'4px 6px',color:'#777'}}>{m&&m.hochgeladen_at?fmtTs(m.hochgeladen_at):'—'}</td>
+              <td style={{padding:'4px 6px',textAlign:'right'}}><button type="button" disabled={busy||!nm} onClick={()=>ivRemoveMaterial(nm)} style={{...btn(false,busy),padding:'3px 10px',fontSize:12}}>Entfernen</button></td>
+            </tr>;})}</tbody></table>}
+            <label style={{...btn(false,busy||mat.length>=IV_MAT.maxDateien),display:'inline-block'}}>{ivBusy==='material'?'Lade hoch…':'Material hinzufügen'}
+              <input type="file" multiple accept=".txt,.docx,.pdf" disabled={busy||mat.length>=IV_MAT.maxDateien} style={{display:'none'}} onChange={e=>{const f=e.target.files;ivUploadMaterial(f);e.target.value='';}}/>
+            </label>
+          </div>;})()}
 
           {/* B2 Import */}
           <div style={card}>
@@ -5014,6 +5364,7 @@ function App(){
             {!canImport&&!noDraft&&<span style={{fontSize:12,color:'#888',marginLeft:10}}>Übernahme aktiv, sobald Runde 1 abgeschlossen ist{!(isEditableStatus(tripStatus)||correctionMode)?' und der Entwurf editierbar ist':''}</span>}
             {ivMock&&role==='admin'&&<div style={{marginTop:8}}><select value={ivMockFail} onChange={e=>setIvMockFail(e.target.value)} style={{...iStyle,width:'auto',fontSize:12,background:'var(--yellow)'}} title="Nur Mock: nächsten Aufruf fehlschlagen lassen">
               <option value="">Mock-Fehler: keiner</option><option value="abbruch">Mock: nächster Import bricht ab (Ergebnis gespeichert)</option><option value="503">Mock: nächster Aufruf 503 Sheets</option>
+              <option value="erzeugen">Mock: nächstes „erzeugen“ schlägt fehl</option><option value="email_fehlt">Mock: nächster Versand 400 email_fehlt</option><option value="upload">Mock: nächster Material-Upload schlägt fehl</option><option value="profil">Mock: nächster Profil-Aufruf schlägt fehl</option>
             </select></div>}
             {importResult&&<div style={{marginTop:12}}>{renderImportPanel()}</div>}
           </div>
@@ -5184,6 +5535,8 @@ function App(){
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           {/* v0.19.3: dauerhaft erreichbarer Neue-Reise-Start (mit Save-Rückfrage, s. handleNewTrip) */}
           <button onClick={handleNewTrip} title="Neue Reise starten (fragt vorher, ob die aktuelle gespeichert werden soll)" style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>➕ Neue Reise</button>
+          {/* v0.29.0 (L-WW-143): Einladeformular — nur admin/curator_master */}
+          {canManage&&<button onClick={openInvite} title="Profil wählen/anlegen, Minimal-Entwurf, Interview-Link, optional Mail" style={{background:'var(--white)',color:'var(--coral)',border:'2px solid var(--coral)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>✉️ Whisperer einladen</button>}
           {/* v0.12: Lade-Modal-Trigger (ersetzt das primitive ENT-…-Eingabefeld) */}
           <button onClick={openLoadModal} style={{background:'var(--white)',color:'var(--sage)',border:'2px solid var(--sage)',padding:'10px 18px',borderRadius:8,fontSize:14,cursor:'pointer',fontWeight:600}}>📂 Laden</button>
           {/* v0.14: { } JSON-Button entfernt. JSON-Vorschau ist nur noch über Admin-Modus 'preview' im Save-Handler erreichbar. */}
@@ -5215,6 +5568,85 @@ function App(){
       </div>}
 
       {/* v0.12: LADE-MODAL — Liste eigener / aller Reisen */}
+      {/* v0.29.0 (L-WW-143, Grundbrief 3.1 + Nachtrag 3.1/3.4): Formular „Whisperer einladen“ */}
+      {invOpen&&canManage&&(()=>{
+        const lauf=invLauf;const laeuft=!!(lauf&&lauf.laeuft);const angelegt=!!(lauf&&lauf.angelegt);
+        const sperre=laeuft||angelegt;
+        const q=inv.suche.trim().toLowerCase();
+        const liste=invProfile.list.filter(p=>!q||[p.vorname,p.nachname,p.email,p.whisperer_id].join(' ').toLowerCase().includes(q)).slice(0,50);
+        const tabBtn=on=>({padding:'6px 14px',borderRadius:20,border:`${on?2:1}px solid ${on?'var(--sage)':'#D0D0D0'}`,background:on?'var(--sage-light)':'var(--white)',fontSize:13,cursor:sperre?'not-allowed':'pointer'});
+        const ST={offen:'○',laeuft:'…',ok:'✓',fehler:'✕',uebersprungen:'–'};
+        const STC={ok:'var(--sage-dark)',fehler:'var(--red)',laeuft:'#B26A00'};
+        const email=invEmail();
+        return <div onClick={closeInvite} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:'var(--white)',borderRadius:12,maxWidth:720,width:'100%',maxHeight:'92vh',overflowY:'auto',boxShadow:'0 10px 40px rgba(0,0,0,0.2)'}}>
+          <div style={{padding:'16px 20px',borderBottom:'2px solid var(--sage-light)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+            <div>
+              <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:20,color:'var(--sage-dark)',fontWeight:700}}>Whisperer einladen</div>
+              <div style={{fontSize:12,color:'#888',marginTop:2}}>Legt einen Minimal-Entwurf an und erzeugt den Interview-Link. Grunddaten fragt der Chat ab.{ivMock&&<span style={{background:'var(--yellow)',padding:'0 6px',borderRadius:3,marginLeft:6}}>Mock-Modus: Profil- und Interview-Aufrufe simuliert, /save-draft live</span>}</div>
+            </div>
+            <button onClick={closeInvite} disabled={laeuft} style={{background:'transparent',border:'1px solid #D0D0D0',borderRadius:6,padding:'6px 12px',fontSize:13,cursor:laeuft?'not-allowed':'pointer',color:'#666'}}>✕ Schließen</button>
+          </div>
+          <div style={{padding:'16px 20px'}}>
+            {/* Profil */}
+            <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Profil</div>
+            <div style={{display:'flex',gap:8,marginBottom:10}}>
+              <button type="button" disabled={sperre} onClick={()=>setInv(v=>({...v,art:'liste'}))} style={tabBtn(inv.art==='liste')}>Bestehendes Profil</button>
+              <button type="button" disabled={sperre} onClick={()=>{setInvDup(null);setInv(v=>({...v,art:'neu',auswahl:null,anrede:v.anredeGeaendert?v.anrede:v.neu.vorname}));}} style={tabBtn(inv.art==='neu')}>Neues Profil</button>
+            </div>
+            {inv.art==='liste'&&<div style={{marginBottom:12}}>
+              <input style={iStyle} placeholder="Suche nach Name oder E-Mail" value={inv.suche} disabled={sperre} onChange={e=>setInv(v=>({...v,suche:e.target.value}))}/>
+              <div style={{border:'1px solid #E0E0E0',borderRadius:6,marginTop:6,maxHeight:180,overflowY:'auto'}}>
+                {invProfile.loading&&<div style={{padding:8,fontSize:12,color:'#888'}}>Lade Profile<span className="ww-dots"></span></div>}
+                {invProfile.error&&<div style={{padding:8,fontSize:12,color:'var(--red)'}}>Profile nicht ladbar: {invProfile.error} <button type="button" onClick={invLoadProfiles} style={{fontSize:12}}>erneut</button></div>}
+                {!invProfile.loading&&!invProfile.error&&liste.length===0&&<div style={{padding:8,fontSize:12,color:'#888'}}>Kein Profil gefunden.</div>}
+                {liste.map(p=>{const on=inv.auswahl&&inv.auswahl.whisperer_id===p.whisperer_id;return <div key={p.whisperer_id} data-wid={p.whisperer_id} onClick={()=>{if(!sperre)invPick(p);}} style={{padding:'6px 10px',fontSize:13,cursor:sperre?'default':'pointer',background:on?'var(--sage-light)':'transparent',borderBottom:'1px solid #F0F0F0',display:'flex',justifyContent:'space-between',gap:8}}>
+                  <span><strong>{[p.vorname,p.nachname].filter(Boolean).join(' ')||'—'}</strong> <span style={{color:'#777'}}>{p.email||'(keine E-Mail)'}</span></span>
+                  <span style={{fontSize:11,color:'#888'}}>{p.whisperer_id}{p.status?' · '+p.status:''}{p.user_id?' · '+p.user_id:''}</span>
+                </div>;})}
+              </div>
+            </div>}
+            {inv.art==='neu'&&<div style={{display:'flex',flexWrap:'wrap',gap:12}}>
+              <Field label="Vorname" badge="PFLICHT" half><input style={iStyle} name="ww-inv-vorname" autoComplete="off" value={inv.neu.vorname} disabled={sperre} onChange={e=>invSetNeu('vorname',e.target.value)}/></Field>
+              <Field label="Nachname" badge="PFLICHT" half><input style={iStyle} name="ww-inv-nachname" autoComplete="off" value={inv.neu.nachname} disabled={sperre} onChange={e=>invSetNeu('nachname',e.target.value)}/></Field>
+              <Field label="E-Mail" badge="PFLICHT"><input style={iStyle} name="ww-inv-email" autoComplete="off" value={inv.neu.email} disabled={sperre} onChange={e=>{setInvDup(null);invSetNeu('email',e.target.value);}}/></Field>
+            </div>}
+            {invDup&&<div style={{background:'#FFF4E5',border:'1px solid var(--coral)',borderRadius:6,padding:'8px 12px',fontSize:13,marginBottom:12}}>
+              Zu dieser E-Mail gibt es bereits ein Profil: <strong>{[invDup.vorname,invDup.nachname].filter(Boolean).join(' ')}</strong> ({invDup.email}, {invDup.whisperer_id}).
+              <button type="button" onClick={()=>{invPick(invDup);setInvLauf(null);}} style={{marginLeft:8,fontSize:12,padding:'3px 10px',border:'1px solid var(--sage)',borderRadius:4,background:'var(--white)',cursor:'pointer'}}>Vorhandenes Profil verwenden</button>
+            </div>}
+            {/* Einladung */}
+            <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:4}}>
+              <Field label="Anrede im Chat" badge="PFLICHT" half hint="vorbelegt mit dem Vornamen"><input style={iStyle} name="ww-inv-anrede" autoComplete="off" value={inv.anrede} disabled={sperre} onChange={e=>setInv(v=>({...v,anrede:e.target.value,anredeGeaendert:true}))}/></Field>
+              <Field label="E-Mail (aus dem Profil)" half><div style={{...iStyle,background:'#F7F7F7',color:email?'var(--anthrazit)':'#999'}}>{email||'—'}</div></Field>
+              <Field label="Arbeitstitel" hint={'optional; leer → „'+ivStandardTitel(invVorname()||'<Vorname>')+'“ · landet im Feld Titel/Destination (reise_ort)'}><input style={iStyle} name="ww-inv-titel" autoComplete="off" value={inv.titel} disabled={sperre} onChange={e=>setInv(v=>({...v,titel:e.target.value}))}/></Field>
+              <Field label="Material des Whisperers (falls schon zugesandt)" hint={'optional · .txt, .docx, .pdf · max. '+IV_MAT.maxMb+' MB je Datei · max. '+IV_MAT.maxDateien+' Dateien · setzt Modus b'}>
+                <input type="file" multiple accept=".txt,.docx,.pdf" disabled={sperre} onChange={e=>invSetFiles(e.target.files)}/>
+                {inv.dateien.length>0&&<div style={{fontSize:12,color:'#777',marginTop:4}}>{inv.dateien.map(f=>f.name).join(', ')}{(()=>{const c=ivMaterialCheck(inv.dateien,[]);return c?<span style={{color:'var(--red)'}}> — {c}</span>:null;})()}</div>}
+              </Field>
+              <Field label="Modus" badge="PFLICHT"><Radio name="inv_modus" value={inv.modus} onChange={v=>{if(!sperre)setInv(x=>({...x,modus:v}));}} options={[{value:'a',label:'a — Interview ohne Material',disabled:inv.dateien.length>0||sperre,title:inv.dateien.length?'Material gewählt → Modus b':''},{value:'b',label:'b — mit Material',disabled:sperre}]}/></Field>
+              <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,flex:'1 1 100%'}}><input type="checkbox" checked={inv.mail} disabled={sperre} onChange={e=>setInv(v=>({...v,mail:e.target.checked}))}/> Einladung direkt per Mail senden{email?' an '+email:''}</label>
+            </div>
+            {/* Ablauf */}
+            {lauf&&lauf.fehler&&<div style={{marginTop:12,fontSize:13,color:'var(--red)'}}>{lauf.fehler}</div>}
+            {lauf&&lauf.schritte&&lauf.schritte.length>0&&<div style={{marginTop:14,background:'var(--beige-light)',border:'1px solid #E0E0E0',borderRadius:8,padding:'10px 14px'}}>
+              {lauf.schritte.map(x=><div key={x.k} data-schritt={x.k} data-st={x.st} style={{fontSize:13,padding:'2px 0',color:STC[x.st]||'#777'}}>{ST[x.st]||'○'} {x.label}{x.text?' — '+x.text:''}</div>)}
+            </div>}
+            {lauf&&lauf.url&&<div style={{marginTop:12,background:'var(--white)',border:'2px solid var(--sage)',borderRadius:6,padding:'10px 12px'}}>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--sage-dark)',marginBottom:6}}>Link für {inv.anrede||'den Whisperer'} <span style={{fontWeight:400,color:'#888'}}>(nur Anzeige; später über „Link anzeigen“ im Tab „Interview“)</span></div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input readOnly value={lauf.url} onFocus={e=>e.target.select()} style={{...iStyle,fontFamily:'monospace',fontSize:12}}/>
+                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(lauf.url);}catch{}}} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'8px 14px',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}>Kopieren</button>
+              </div>
+            </div>}
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
+              {!angelegt&&<button type="button" disabled={laeuft} onClick={runInvite} style={{background:laeuft?'#F0F0F0':'var(--coral)',color:laeuft?'#999':'var(--white)',border:'none',padding:'10px 22px',borderRadius:8,fontSize:14,fontWeight:600,cursor:laeuft?'not-allowed':'pointer'}}>{laeuft?'Lädt ein…':'Einladen'}</button>}
+              {angelegt&&<button type="button" disabled={laeuft} onClick={openInvitedDraft} style={{background:'var(--sage)',color:'var(--white)',border:'none',padding:'10px 22px',borderRadius:8,fontSize:14,fontWeight:600,cursor:laeuft?'not-allowed':'pointer'}}>Entwurf öffnen ({lauf.entwurf_id})</button>}
+            </div>
+          </div>
+        </div>
+      </div>;})()}
+
       {showLoadModal&&<div onClick={closeLoadModal} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
         <div onClick={e=>e.stopPropagation()} style={{background:'var(--white)',borderRadius:12,maxWidth:820,width:'100%',maxHeight:'90vh',display:'flex',flexDirection:'column',boxShadow:'0 10px 40px rgba(0,0,0,0.2)'}}>
           <div style={{padding:'16px 20px',borderBottom:'2px solid var(--sage-light)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
