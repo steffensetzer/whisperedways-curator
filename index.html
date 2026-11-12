@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.29.0 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.29.1 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz; Feldnamen c 2026-11-12)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -53,15 +53,15 @@ const lsSet=(k,v)=>{try{localStorage.setItem('ww_'+k,v);}catch{}};
 // ===================== UTILITY =====================
 const genId=()=>'ENT-'+new Date().toISOString().replace(/[-T:\.]/g,'').substring(0,14);
 // v0.29.0 (Nachtrag 2026-11-12 Punkt 4): clientseitige Vorprüfung Material wie die c-Grenzen
-// (WF9 upload_max_mb 10, upload_max_dateien 5; Endungen .txt/.docx/.pdf). Maßgeblich bleibt die Prüfung bei c.
-const IV_MAT={endungen:['txt','docx','pdf'],maxMb:10,maxDateien:5};
+// (WF9 upload_max_mb 10, upload_max_dateien 5; Endungen .txt/.md/.docx/.pdf laut ANTWORT c 2026-11-12). Maßgeblich bleibt die Prüfung bei c.
+const IV_MAT={endungen:['txt','md','docx','pdf'],maxMb:10,maxDateien:5,accept:'.txt,.md,.docx,.pdf',text:'.txt, .md, .docx, .pdf'};
 const ivEndung=n=>{const m=/\.([^.]+)$/.exec(String(n||''));return m?m[1].toLowerCase():'';};
 function ivMaterialCheck(files,vorhanden){
   const v=Array.isArray(vorhanden)?vorhanden:[];
   if(v.length+files.length>IV_MAT.maxDateien) return 'Höchstens '+IV_MAT.maxDateien+' Dateien je Interview (vorhanden: '+v.length+', neu: '+files.length+').';
   const namen=new Set(v.map(x=>String(x&&x.dateiname||'').toLowerCase()));
   for(const f of files){
-    if(!IV_MAT.endungen.includes(ivEndung(f.name))) return '„'+f.name+'“: nur .txt, .docx oder .pdf.';
+    if(!IV_MAT.endungen.includes(ivEndung(f.name))) return '„'+f.name+'“: nur '+IV_MAT.text+'.';
     if((f.size||0)>IV_MAT.maxMb*1024*1024) return '„'+f.name+'“ ist größer als '+IV_MAT.maxMb+' MB.';
     const k=String(f.name).toLowerCase();
     if(namen.has(k)) return '„'+f.name+'“ ist bereits vorhanden.';
@@ -2951,7 +2951,9 @@ function App(){
     einladung_gesendet_at:r.einladung_gesendet_at||'',
     einladung_anzahl:Number(r.einladung_anzahl)||0,
     material:Array.isArray(r.material)?r.material:null,
-    whisperer_id:r.whisperer_id||''
+    whisperer_id:r.whisperer_id||'',
+    // ANTWORT c 2026-11-12: false = Bestandszeile ohne gespeicherten Link → „Link erneuern“ statt „Link anzeigen“.
+    link_gespeichert:r.link_gespeichert===false?false:(r.link_gespeichert===true?true:null)
   });
 
   // ---------- Mock (nur bis c-Endpunkte stehen) ----------
@@ -2989,8 +2991,8 @@ function App(){
     // Nur Mock: Bestandszeile ohne token_enc simulieren (Kriterium 4 Grundbrief).
     if(aktion==='mock_altbestand'){const n={...st,_url:'',link_gespeichert:false};S[eid]=n;return {ok:true,...pub(n)};}
     if(aktion==='link_anzeigen'){
-      if(!st._url) return {ok:false,error:'link_nicht_gespeichert',hinweis:'Link erneuern, das Gespräch läuft weiter',_status:409};
-      return {ok:true,interview_id:st.interview_id,entwurf_id:eid,chat_url:st._url,token_status:st.token_status,token_effektiv:st.token_effektiv,token_gueltig_bis:st.token_gueltig_bis};
+      if(!st._url) return {ok:false,error:'link_nicht_gespeichert',hinweis:'Link erneuern, das Gespräch läuft weiter.',_status:409};
+      return {ok:true,interview_id:st.interview_id,entwurf_id:eid,link_gespeichert:true,chat_url:st._url,token_status:st.token_status,token_effektiv:st.token_effektiv,token_gueltig_bis:st.token_gueltig_bis};
     }
     if(aktion==='einladung_senden'){
       if(!st._url) return {ok:false,error:'link_nicht_gespeichert',hinweis:'Link erneuern, das Gespräch läuft weiter',_status:409};
@@ -3001,14 +3003,19 @@ function App(){
       return {ok:true,gesendet_at:at,empfaenger:st.whisperer_email,einladung_anzahl:n.einladung_anzahl,mit_material_satz:(st.material||[]).some(m=>m.quelle==='betreiber')};
     }
     if(aktion==='material_hochladen'){
-      const d=body.datei||{};
-      const chk=ivMaterialCheck([{name:d.dateiname,size:Math.floor(String(d.inhalt_base64||'').length*3/4)}],(st.material||[]));
-      if(chk) return {ok:false,error:'datei_abgelehnt',hinweis:chk,_status:422};
+      const nm=String(body.dateiname||'');const b64=String(body.datei||'').replace(/^data:[^,]*,/,'');
+      const mat=st.material||[];
+      if(!IV_MAT.endungen.includes(ivEndung(nm))) return {ok:false,error:'typ_nicht_erlaubt',hinweis:'Erlaubt: '+IV_MAT.text,_status:415};
+      if(!b64) return {ok:false,error:'datei_ungueltig',hinweis:'Kein Base64-Inhalt.',_status:400};
+      if(b64.length*3/4>IV_MAT.maxMb*1024*1024) return {ok:false,error:'datei_zu_gross',hinweis:'Über '+IV_MAT.maxMb+' MB.',_status:413};
+      if(mat.length>=IV_MAT.maxDateien) return {ok:false,error:'max_dateien',hinweis:'Höchstens '+IV_MAT.maxDateien+' Dateien je Interview.',_status:409};
+      if(mat.some(m=>String(m.dateiname).toLowerCase()===nm.toLowerCase())) return {ok:false,error:'datei_existiert',hinweis:'Datei mit gleichem Namen vorhanden.',_status:409};
       if((st.transkript_version||0)>0&&st.modus==='a') return {ok:false,error:'modus_a_laufend',hinweis:'Das Gespräch läuft in Modus a — Material kann nicht mehr hinterlegt werden.',_status:409};
-      const n={...st,modus:(st.transkript_version||0)===0?'b':st.modus,material:[...(st.material||[]),{dateiname:d.dateiname,typ:d.typ,quelle:'betreiber',hochgeladen_at:new Date().toISOString()}]};
+      const n={...st,modus:(st.transkript_version||0)===0?'b':st.modus,material:[...mat,{dateiname:nm,typ:ivEndung(nm),quelle:'betreiber',hochgeladen_at:new Date().toISOString(),zeichen:Math.floor(b64.length*3/4)}]};
       S[eid]=n;return {ok:true,...pub(n)};
     }
     if(aktion==='material_entfernen'){
+      if(!(st.material||[]).some(m=>m.dateiname===body.dateiname)) return {ok:false,error:'datei_nicht_gefunden',_status:404};
       const n={...st,material:(st.material||[]).filter(m=>m.dateiname!==body.dateiname)};S[eid]=n;return {ok:true,...pub(n)};
     }
     // v0.28.0: extrakt_wiederholen (409 bei abgeschlossen/importiert oder ohne freigegebene Fassung).
@@ -3070,7 +3077,7 @@ function App(){
       kontrollpunkte:['[Mock] Hotel A über „Hotel suchen“ binden','[Mock] Tag-Typen prüfen',
         // v0.29.0 (Nachtrag Punkt 3): Abweichungs-Kontrollpunkte wie von c vorgeschlagen (Zeichenkette, bestehendes Format).
         ...(tage.length&&tage.length!==n?['[Mock] Tage: Entwurf '+tage.length+', Interview '+n+' — Interview-Wert übernommen']:[]),
-        ...(trip.reise_ort?['[Mock] Titel/Ort: Entwurf „'+trip.reise_ort+'“, Interview „'+trip.reise_ort+' (Interview)“ — Interview-Wert übernommen']:[])],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
+        ...(ivIstStandardTitel(trip.reise_ort)?['[Mock] Titel/Ort: noch der Standardtitel „'+trip.reise_ort+'“ — bitte Reisetitel setzen']:trip.reise_ort?['[Mock] Titel/Ort: Entwurf „'+trip.reise_ort+'“, Interview „'+trip.reise_ort+' (Interview)“ — Interview-Wert übernommen']:[])],offene_punkte:['[Mock] Restaurant Tag 2: Name unklar'],warnungen:['[Mock] Abreisetag: Unterkunft der Vornacht gesetzt']};
   };
   // v0.28.0: Mock speichert den S2-Vorschlag wie WF-INT-IMPORT v1.4 (nur bei Erfolg) und liefert ihn über import_ergebnis.
   const ivMockImportSave=()=>{
@@ -3125,7 +3132,7 @@ function App(){
     if(aktion!=='status') setIvUrl('');
     try{
       let body;
-      if(aktion==='erzeugen') body={entwurf_id:entwurfId,whisperer_name:ivForm.whisperer_name.trim(),whisperer_email:ivForm.whisperer_email.trim(),modus:ivForm.modus,...(draftWhispererId?{whisperer_id:draftWhispererId}:{})};
+      if(aktion==='erzeugen') body={entwurf_id:entwurfId,whisperer_name:ivForm.whisperer_name.trim(),whisperer_email:ivForm.whisperer_email.trim(),modus:ivForm.modus};
       else if(aktion==='status') body={entwurf_id:entwurfId};
       else if(aktion==='mock_status'||aktion==='mock_altbestand') body={...extra};
       else body={interview_id:iid,...(extra.neues_token?{neues_token:true}:{})};
@@ -3188,7 +3195,8 @@ function App(){
     for(const f of files){
       try{
         const b64=await ivFileToBase64(f);
-        last=await ivRun('material_hochladen',{interview_id:iid,entwurf_id:eid,datei:{dateiname:f.name,typ:ivEndung(f.name),mime:f.type||'',inhalt_base64:b64}});
+        // ANTWORT c 2026-11-12: Feldnamen wie Chat-Upload — dateiname + datei (Base64) auf oberster Ebene; typ/mime setzt c.
+        last=await ivRun('material_hochladen',{interview_id:iid,entwurf_id:eid,dateiname:f.name,datei:b64});
       }catch(e){return {last,error:ivMatErrText(e),fehlerDatei:f.name};}
     }
     return {last,error:''};
@@ -3312,7 +3320,7 @@ function App(){
     upd('link','laeuft');
     let interviewId='';
     try{
-      const r=await ivRun('erzeugen',{entwurf_id:eid,whisperer_name:inv.anrede.trim(),whisperer_email:invEmail(),modus:inv.modus,whisperer_id:wid});
+      const r=await ivRun('erzeugen',{entwurf_id:eid,whisperer_name:inv.anrede.trim(),whisperer_email:invEmail(),modus:inv.modus});
       interviewId=r.interview_id||'';
       lauf={...lauf,url:r.url||''};
       upd('link','ok',interviewId);
@@ -4403,7 +4411,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.0 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.1 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz; Feldnamen c 2026-11-12)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -5300,7 +5308,8 @@ function App(){
             </div>}
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               {!hasLink&&<button type="button" disabled={busy||noDraft} onClick={()=>ivLinkAction('erzeugen')} style={btn(true,busy||noDraft)}>{ivBusy==='erzeugen'?'Erzeuge…':'Link erzeugen'}</button>}
-              {hasLink&&<button type="button" disabled={busy||noDraft} onClick={ivShowLink} title="Gespeicherten Link abrufen (nur Anzeige)" style={btn(true,busy||noDraft)}>{ivBusy==='link_anzeigen'?'Lade Link…':'Link anzeigen'}</button>}
+              {hasLink&&<button type="button" disabled={busy||noDraft||info.link_gespeichert===false} onClick={ivShowLink} title={info.link_gespeichert===false?'Link erneuern, das Gespräch läuft weiter':'Gespeicherten Link abrufen (nur Anzeige)'} style={btn(true,busy||noDraft||info.link_gespeichert===false)}>{ivBusy==='link_anzeigen'?'Lade Link…':'Link anzeigen'}</button>}
+              {hasLink&&info.link_gespeichert===false&&<span style={{fontSize:12,color:'#B26A00',alignSelf:'center'}}>Link erneuern, das Gespräch läuft weiter („Neuen Link erzeugen“).</span>}
               {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} onClick={()=>ivLinkAction('sperren')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='sperren'?'Sperre…':'Link sperren'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft||info.token_effektiv==='gesperrt'} title={info.token_effektiv==='gesperrt'?'Gesperrter Link: nur „Neuen Link erzeugen“':'Gleiche URL, +60 Tage'} onClick={()=>ivLinkAction('erneuern')} style={btn(false,busy||noDraft||info.token_effektiv==='gesperrt')}>{ivBusy==='erneuern'?'Verlängere…':'Laufzeit verlängern'}</button>}
               {hasLink&&<button type="button" disabled={busy||noDraft} title="Neue URL; die bisherige ist danach ungültig" onClick={()=>ivLinkAction('erneuern',{neues_token:true})} style={btn(false,busy||noDraft)}>Neuen Link erzeugen</button>}
@@ -5328,16 +5337,16 @@ function App(){
           {/* v0.29.0 (Nachtrag 3.4): Material vorab */}
           {hasLink&&(()=>{const mat=ivMaterialList();return <div style={card}>
             <div style={head}>Material</div>
-            <div style={{fontSize:12,color:'#777',marginBottom:8}}>.txt, .docx, .pdf · max. {IV_MAT.maxMb} MB je Datei · max. {IV_MAT.maxDateien} Dateien je Interview (Team und Whisperer zusammen). Hochladen setzt vor Gesprächsbeginn Modus b.</div>
+            <div style={{fontSize:12,color:'#777',marginBottom:8}}>{IV_MAT.text} · max. {IV_MAT.maxMb} MB je Datei · max. {IV_MAT.maxDateien} Dateien je Interview (Team und Whisperer zusammen). Hochladen setzt vor Gesprächsbeginn Modus b.</div>
             {mat.length===0&&<div style={{fontSize:13,color:'#888',marginBottom:8}}>Noch kein Material.</div>}
             {mat.length>0&&<table style={{width:'100%',fontSize:13,borderCollapse:'collapse',marginBottom:10}}><tbody>{mat.map((m,i)=>{const nm=(m&&(m.dateiname||m.name))||'';return <tr key={nm+i} style={{borderBottom:'1px solid #ECECEC'}}>
-              <td style={{padding:'4px 6px'}}>{nm}{m&&m.typ?<span style={{color:'#888'}}> ({m.typ})</span>:null}</td>
+              <td style={{padding:'4px 6px'}}>{nm}{m&&m.typ?<span style={{color:'#888'}}> ({m.typ}{m.zeichen?', '+Number(m.zeichen).toLocaleString('de-DE')+' Zeichen':''})</span>:null}</td>
               <td style={{padding:'4px 6px',color:'#777'}}>{IV_QUELLE[(m&&m.quelle)||'whisperer']||m.quelle}</td>
               <td style={{padding:'4px 6px',color:'#777'}}>{m&&m.hochgeladen_at?fmtTs(m.hochgeladen_at):'—'}</td>
               <td style={{padding:'4px 6px',textAlign:'right'}}><button type="button" disabled={busy||!nm} onClick={()=>ivRemoveMaterial(nm)} style={{...btn(false,busy),padding:'3px 10px',fontSize:12}}>Entfernen</button></td>
             </tr>;})}</tbody></table>}
             <label style={{...btn(false,busy||mat.length>=IV_MAT.maxDateien),display:'inline-block'}}>{ivBusy==='material'?'Lade hoch…':'Material hinzufügen'}
-              <input type="file" multiple accept=".txt,.docx,.pdf" disabled={busy||mat.length>=IV_MAT.maxDateien} style={{display:'none'}} onChange={e=>{const f=e.target.files;ivUploadMaterial(f);e.target.value='';}}/>
+              <input type="file" multiple accept={IV_MAT.accept} disabled={busy||mat.length>=IV_MAT.maxDateien} style={{display:'none'}} onChange={e=>{const f=e.target.files;ivUploadMaterial(f);e.target.value='';}}/>
             </label>
           </div>;})()}
 
@@ -5620,8 +5629,8 @@ function App(){
               <Field label="Anrede im Chat" badge="PFLICHT" half hint="vorbelegt mit dem Vornamen"><input style={iStyle} name="ww-inv-anrede" autoComplete="off" value={inv.anrede} disabled={sperre} onChange={e=>setInv(v=>({...v,anrede:e.target.value,anredeGeaendert:true}))}/></Field>
               <Field label="E-Mail (aus dem Profil)" half><div style={{...iStyle,background:'#F7F7F7',color:email?'var(--anthrazit)':'#999'}}>{email||'—'}</div></Field>
               <Field label="Arbeitstitel" hint={'optional; leer → „'+ivStandardTitel(invVorname()||'<Vorname>')+'“ · landet im Feld Titel/Destination (reise_ort)'}><input style={iStyle} name="ww-inv-titel" autoComplete="off" value={inv.titel} disabled={sperre} onChange={e=>setInv(v=>({...v,titel:e.target.value}))}/></Field>
-              <Field label="Material des Whisperers (falls schon zugesandt)" hint={'optional · .txt, .docx, .pdf · max. '+IV_MAT.maxMb+' MB je Datei · max. '+IV_MAT.maxDateien+' Dateien · setzt Modus b'}>
-                <input type="file" multiple accept=".txt,.docx,.pdf" disabled={sperre} onChange={e=>invSetFiles(e.target.files)}/>
+              <Field label="Material des Whisperers (falls schon zugesandt)" hint={'optional · '+IV_MAT.text+' · max. '+IV_MAT.maxMb+' MB je Datei · max. '+IV_MAT.maxDateien+' Dateien · setzt Modus b'}>
+                <input type="file" multiple accept={IV_MAT.accept} disabled={sperre} onChange={e=>invSetFiles(e.target.files)}/>
                 {inv.dateien.length>0&&<div style={{fontSize:12,color:'#777',marginTop:4}}>{inv.dateien.map(f=>f.name).join(', ')}{(()=>{const c=ivMaterialCheck(inv.dateien,[]);return c?<span style={{color:'var(--red)'}}> — {c}</span>:null;})()}</div>}
               </Field>
               <Field label="Modus" badge="PFLICHT"><Radio name="inv_modus" value={inv.modus} onChange={v=>{if(!sperre)setInv(x=>({...x,modus:v}));}} options={[{value:'a',label:'a — Interview ohne Material',disabled:inv.dateien.length>0||sperre,title:inv.dateien.length?'Material gewählt → Modus b':''},{value:'b',label:'b — mit Material',disabled:sperre}]}/></Field>
