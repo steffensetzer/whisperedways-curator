@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.29.2 (Aufgabe 75 · nur tag_story, Zeichenanzeige params_json, Tagesrichtwerte 3/6/3)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.29.3 (Aufgabe 75 · Zeichenzählung wie WF1 v2.16.0, zelle_zu_gross)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -3312,7 +3312,7 @@ function App(){
     try{
       const payload={entwurf_id:eid,created_at:new Date().toISOString(),status:'entwurf',user_id:currentUserId,user_name:currentUserName,whisperer_id:wid,quelltext:'ReiseOrt: '+titel,params:{reise_ort:titel,tage:[]}};
       const r=await apiCall('POST','/save-draft',payload);
-      if(!r||r.error||r.success===false||r.ok===false) throw new Error((r&&(r.error||r.message))||'Speichern fehlgeschlagen');
+      if(!r||r.error||r.success===false||r.ok===false) throw new Error(saveErrText(r)||'Speichern fehlgeschlagen');  // v0.29.3: zelle_zu_gross mit hinweis
       lauf={...lauf,entwurf_id:eid,angelegt:true};
       upd('entwurf','ok',eid);
     }catch(e){upd('entwurf','fehler',e.message);return ende({});}
@@ -3735,6 +3735,31 @@ function App(){
   // Nach erfolgreichem /save-draft: gesendete ID als Entwurfs-ID übernehmen (nur Neuanlage relevant).
   const notePayloadSaved=(p)=>{if(p&&p.whisperer_id&&!draftWhispererId) setDraftWhispererId(p.whisperer_id);};
 
+  // ============== v0.29.3 (Vermerk e→b 2026-11-18, e-D230): Bereinigung wie WF1 v2.16.0 „Prepare Draft Save“ ==============
+  // Regel 1:1 nach Vermerk: je Tag tag_beschreibung weg, wenn leer oder gleich tag_story; in stopps/restaurants/
+  // aktivitaeten jedes Feld mit "", null oder [] weg (außer position, name). Gesendet wird das bereinigte params
+  // (Wahl b) → gezählte Länge = gesendete = geschriebene Länge. Der Server bereinigt erneut (ohne Wirkung).
+  const PJ_LISTEN=['stopps','restaurants','aktivitaeten'],PJ_BEHALTEN=['position','name'];
+  const pjLeer=v=>v===''||v===null||(Array.isArray(v)&&v.length===0);
+  const serverBereinigung=params=>{
+    if(!params||!Array.isArray(params.tage)) return params;
+    return {...params,tage:params.tage.map(t=>{
+      if(!t||typeof t!=='object') return t;
+      const o={...t};
+      if('tag_beschreibung' in o&&(pjLeer(o.tag_beschreibung)||o.tag_beschreibung===undefined||o.tag_beschreibung===o.tag_story)) delete o.tag_beschreibung;
+      PJ_LISTEN.forEach(k=>{
+        if(!Array.isArray(o[k])) return;
+        o[k]=o[k].map(e=>{
+          if(!e||typeof e!=='object') return e;
+          const r={};
+          Object.keys(e).forEach(f=>{if(PJ_BEHALTEN.includes(f)||!pjLeer(e[f])) r[f]=e[f];});
+          return r;
+        });
+      });
+      return o;
+    })};
+  };
+
   // ============== BUILD PAYLOAD ==============
   const buildPayload=()=>{
     const params={
@@ -3810,7 +3835,7 @@ function App(){
       status:tripStatus||'entwurf',
       anzahl_tage:tage.length,
       quelltext,
-      params,
+      params:serverBereinigung(params),  // v0.29.3: bereinigt wie WF1 v2.16.0
       taxonomien:taxonomienOut,
       mit_kindern:!!trip.mit_kindern,  // v0.26.4 (e-D204): tatsächlicher Wert statt fest false
       hotel_ids:JSON.stringify(trip.hotels.filter(h=>h.hotel_id).map(h=>h.hotel_id)),
@@ -3854,9 +3879,10 @@ function App(){
 
   // ============== v0.29.2 (Aufgabe 75 Punkt 2): Zeichenanzeige und Speichergrenze params_json ==============
   // WF1 „Prepare Draft Save“ schreibt out.params_json = JSON.stringify(data.params) → hier dieselbe Serialisierung.
+  // v0.29.3: gezählt wird nach serverBereinigung() (buildPayload sendet bereits das bereinigte params).
   // Google Sheets nimmt je Zelle höchstens 50.000 Zeichen (technische Grenze, keine fachliche Regel).
   const PJ_HINWEIS=40000,PJ_WARNUNG=48000,PJ_GRENZE=50000;
-  const paramsJsonLen=p=>{try{return JSON.stringify((p&&p.params)||{}).length;}catch{return 0;}};
+  const paramsJsonLen=p=>{try{return JSON.stringify(serverBereinigung((p&&p.params)||{})).length;}catch{return 0;}};
   const fmtZ=n=>Number(n||0).toLocaleString('de-DE');
   const pjLen=paramsJsonLen(buildPayload());
   const pjStufe=pjLen>=PJ_GRENZE?'grenze':pjLen>=PJ_WARNUNG?'warnung':pjLen>=PJ_HINWEIS?'hinweis':'';
@@ -3864,6 +3890,10 @@ function App(){
   // Fehlerantwort /save-draft: error, ok:false oder success:false (leerer/ungültiger Body → apiCall liefert error).
   const saveErrText=d=>{
     if(!d) return 'leere Antwort';
+    // v0.29.3 (Vermerk 2026-11-18): Server-Grenzprüfung WF1 v2.16.0 — ok:false, error 'zelle_zu_gross', feld, zeichen, hinweis.
+    if(d.error==='zelle_zu_gross'){
+      return `Zelle zu groß${d.feld?' ('+d.feld+')':''}${d.zeichen?': '+fmtZ(d.zeichen)+' Zeichen':''}, Google Sheets nimmt je Zelle höchstens ${fmtZ(PJ_GRENZE)}.`+(d.hinweis?' '+d.hinweis:'')+' Das Formular ist unverändert.';
+    }
     if(d.error||d.ok===false||d.success===false){
       const t=d.error||d.message||d.hinweis||'Server meldet ok:false ohne Fehlertext';
       return String(t)+(d.zeichen?` (${fmtZ(d.zeichen)} Zeichen)`:'');
@@ -4461,7 +4491,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.2 (Aufgabe 75 · nur tag_story, Zeichenanzeige params_json, Tagesrichtwerte 3/6/3)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.3 (Aufgabe 75 · Zeichenzählung wie WF1 v2.16.0, zelle_zu_gross)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -5604,7 +5634,7 @@ function App(){
           {/* v0.14: Pflicht-Legende */}
           <span style={{fontSize:11,color:'#888',marginLeft:6}}><span style={{color:'var(--red)',fontWeight:700}}>*</span> = Pflichtfeld</span>
           {/* v0.29.2 (Punkt 2): Zeichenanzeige params_json — Hinweis ab 40.000, Warnung ab 48.000, ab 50.000 kein Senden. */}
-          <span data-pj-stufe={pjStufe||'ok'} title="Länge des Formularzustands (params_json), wie er gespeichert wird. Google Sheets nimmt je Zelle höchstens 50.000 Zeichen." style={{fontSize:11,marginLeft:6,padding:'2px 8px',borderRadius:4,fontWeight:pjStufe?700:400,
+          <span data-pj-stufe={pjStufe||'ok'} title="Länge des Formularzustands (params_json) nach der Bereinigung wie auf dem Server (leere Felder entfallen), wie er gespeichert wird. Google Sheets nimmt je Zelle höchstens 50.000 Zeichen." style={{fontSize:11,marginLeft:6,padding:'2px 8px',borderRadius:4,fontWeight:pjStufe?700:400,
             color:pjStufe==='grenze'?'var(--white)':pjStufe==='warnung'?'#8A3A24':pjStufe==='hinweis'?'#7A5A00':'#888',
             background:pjStufe==='grenze'?'var(--red)':pjStufe==='warnung'?'var(--coral-light)':pjStufe==='hinweis'?'#FFF4CC':'transparent',
             border:pjStufe==='warnung'?'1px solid var(--coral)':'none'}}>
