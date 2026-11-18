@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.29.3 (Aufgabe 75 · Zeichenzählung wie WF1 v2.16.0, zelle_zu_gross)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.29.4 (Aufgabe 75 · Zählung wie WF1 v2.16.0, ohne namen_pflicht/tag_unterkunft/tag_links)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -2029,7 +2029,7 @@ function App(){
   // Dort gilt immer die Unterkunft der Vornacht (e-D185): hotel_ref wird aus dem Vortag abgeleitet, nie
   // aus der eigenen Auswahl — die leere Auswahl kann dort kein Hotel A mehr erzeugen. Zusätzlich je Tag
   // unterkunft_modus 'vornacht' (Default) | 'keine' (NEU-1, additives Feld in params_json.tage; c-Abstimmung).
-  // Bei 'keine' bleibt hotel_ref = Vortag (Brief: bis zur c-Klärung), nur tag_unterkunft wird leer.
+  // Bei 'keine' bleibt hotel_ref = Vortag (Brief: bis zur c-Klärung). v0.29.4: tag_unterkunft wird nicht mehr gesendet.
   // Abreisetag an Position 1 (kein Vortag) → normale Hotel-Auswahl.
   const isAbreisetag=(arr,i)=>!!(arr[i]&&arr[i].tag_typ==='abreisetag'&&i>0);
   const effHotelRef=(arr,i)=>{
@@ -3770,7 +3770,7 @@ function App(){
       faq_seeds:'',
       image_source_priority:(trip.image_source_priority||'unsplash'),
       tage:tage.map((t,ti)=>{
-        // v0.26.0 (L-WW-132): Abreisetag → hotel_ref = Vornacht; bei 'keine' tag_unterkunft leer.
+        // v0.26.0 (L-WW-132): Abreisetag → hotel_ref = Vornacht. v0.29.4: tag_unterkunft entfällt; 'keine' nur über unterkunft_modus.
         const abreise=isAbreisetag(tage,ti);
         const hRef=abreise?effHotelRef(tage,ti):(t.hotel_ref||'A');
         const keine=abreise&&t.unterkunft_modus==='keine';
@@ -3778,7 +3778,8 @@ function App(){
         tag_nummer:String(t.tag_nummer),
         tag_ort:t.tag_titel||'',
         // v0.29.2 (Aufgabe 75 Punkt 1, e-D227/e-D228): tag_beschreibung entfällt — WF1 leitet sie aus tag_story ab.
-        tag_unterkunft:keine?'':(trip.hotels.find(h=>h.ref===(abreise?hRef:t.hotel_ref))?.name||''),
+        // v0.29.4 (b-NEU-1, Meldung c→b 2026-11-18): tag_unterkunft, tag_links, namen_pflicht entfallen — kein Leser
+        // gespeicherter Entwürfe (Durchsicht 26 Workflows), WF3DIFF v1.2 nimmt sie aus dem Tagesvergleich.
         // v0.14.3: tag_highlight basiert jetzt auf der nach position sortierten Liste — der erste
         // ausgefüllte Stopp im chronologischen Tagesablauf wird als Highlight verwendet (vorher
         // war es t.stopps[0], also der erste Stopp im Original-Array, was nach der Mix-Restrukturierung
@@ -3787,9 +3788,7 @@ function App(){
           const sorted=[...(t.stopps||[])].filter(s=>s&&s.name).sort((a,b)=>(Number(a.position)||0)-(Number(b.position)||0));
           return sorted[0]?.name||'';
         })(),
-        tag_links:[],
         tag_typ:t.tag_typ||'normaltag',
-        namen_pflicht:t.stopps.map(s=>s.name).filter(Boolean).join(', '),
         tag_start:t.tag_start||'',
         tag_story:t.tag_story||'',
         // v0.19.2 (S-1): additives Tagesort-Feld je Tag (Ortschaft, in der der Tag spielt).
@@ -4491,7 +4490,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.3 (Aufgabe 75 · Zeichenzählung wie WF1 v2.16.0, zelle_zu_gross)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.4 (Aufgabe 75 · Zählung wie WF1 v2.16.0, ohne namen_pflicht/tag_unterkunft/tag_links)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
