@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whispered Ways — Whisperer Onboarding v0.29.1 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz; Feldnamen c 2026-11-12)</title>
+<title>Whispered Ways — Whisperer Onboarding v0.29.2 (Aufgabe 75 · nur tag_story, Zeichenanzeige params_json, Tagesrichtwerte 3/6/3)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -3312,7 +3312,7 @@ function App(){
     try{
       const payload={entwurf_id:eid,created_at:new Date().toISOString(),status:'entwurf',user_id:currentUserId,user_name:currentUserName,whisperer_id:wid,quelltext:'ReiseOrt: '+titel,params:{reise_ort:titel,tage:[]}};
       const r=await apiCall('POST','/save-draft',payload);
-      if(!r||r.error||r.success===false) throw new Error((r&&r.error)||'Speichern fehlgeschlagen');
+      if(!r||r.error||r.success===false||r.ok===false) throw new Error((r&&(r.error||r.message))||'Speichern fehlgeschlagen');
       lauf={...lauf,entwurf_id:eid,angelegt:true};
       upd('entwurf','ok',eid);
     }catch(e){upd('entwurf','fehler',e.message);return ende({});}
@@ -3752,7 +3752,7 @@ function App(){
         return {
         tag_nummer:String(t.tag_nummer),
         tag_ort:t.tag_titel||'',
-        tag_beschreibung:t.tag_story||'',
+        // v0.29.2 (Aufgabe 75 Punkt 1, e-D227/e-D228): tag_beschreibung entfällt — WF1 leitet sie aus tag_story ab.
         tag_unterkunft:keine?'':(trip.hotels.find(h=>h.ref===(abreise?hRef:t.hotel_ref))?.name||''),
         // v0.14.3: tag_highlight basiert jetzt auf der nach position sortierten Liste — der erste
         // ausgefüllte Stopp im chronologischen Tagesablauf wird als Highlight verwendet (vorher
@@ -3852,16 +3852,56 @@ function App(){
     };
   };
 
+  // ============== v0.29.2 (Aufgabe 75 Punkt 2): Zeichenanzeige und Speichergrenze params_json ==============
+  // WF1 „Prepare Draft Save“ schreibt out.params_json = JSON.stringify(data.params) → hier dieselbe Serialisierung.
+  // Google Sheets nimmt je Zelle höchstens 50.000 Zeichen (technische Grenze, keine fachliche Regel).
+  const PJ_HINWEIS=40000,PJ_WARNUNG=48000,PJ_GRENZE=50000;
+  const paramsJsonLen=p=>{try{return JSON.stringify((p&&p.params)||{}).length;}catch{return 0;}};
+  const fmtZ=n=>Number(n||0).toLocaleString('de-DE');
+  const pjLen=paramsJsonLen(buildPayload());
+  const pjStufe=pjLen>=PJ_GRENZE?'grenze':pjLen>=PJ_WARNUNG?'warnung':pjLen>=PJ_HINWEIS?'hinweis':'';
+  const pjBlockText=n=>`Nicht gesendet: Der Formularzustand (params_json) hat ${fmtZ(n)} Zeichen, Google Sheets nimmt je Zelle höchstens ${fmtZ(PJ_GRENZE)}. Einträge parken oder Texte kürzen. Das Formular ist unverändert.`;
+  // Fehlerantwort /save-draft: error, ok:false oder success:false (leerer/ungültiger Body → apiCall liefert error).
+  const saveErrText=d=>{
+    if(!d) return 'leere Antwort';
+    if(d.error||d.ok===false||d.success===false){
+      const t=d.error||d.message||d.hinweis||'Server meldet ok:false ohne Fehlertext';
+      return String(t)+(d.zeichen?` (${fmtZ(d.zeichen)} Zeichen)`:'');
+    }
+    return '';
+  };
+  // ============== v0.29.2 (Aufgabe 75 Punkt 3, e-D228): Richtwerte je Tag — nur Hinweis, keine Sperre ==============
+  // Hauptstationen = Stopps mit ort_profil + alle Aktivitäten; Punkte = Stopps + Aktivitäten; Food/Drink = alle
+  // Einträge der Liste restaurants (jede Mahlzeit/jeder Anlass). Gezählt werden nur benannte Einträge (wie buildPayload).
+  const RW_HAUPT=3,RW_PUNKTE=6,RW_FOOD=3;
+  const tagRichtwerte=t=>{
+    const nm=x=>x&&String(x.name||'').trim();
+    const st=((t&&t.stopps)||[]).filter(nm),ak=((t&&t.aktivitaeten)||[]).filter(nm),fd=((t&&t.restaurants)||[]).filter(nm);
+    const haupt=st.filter(x=>!!x.ort_profil).length+ak.length,punkte=st.length+ak.length,food=fd.length;
+    const ueber=[];
+    if(haupt>RW_HAUPT) ueber.push(`${haupt} Hauptstationen (Richtwert ${RW_HAUPT})`);
+    if(punkte>RW_PUNKTE) ueber.push(`${punkte} Punkte (Richtwert ${RW_PUNKTE})`);
+    if(food>RW_FOOD) ueber.push(`${food} Food/Drink (Richtwert ${RW_FOOD})`);
+    return {haupt,punkte,food,ueber};
+  };
+  const rwTage=tage.map((t,i)=>({nr:t.tag_nummer||i+1,idx:i,...tagRichtwerte(t)})).filter(x=>x.ueber.length);
+  const RW_OPTIONEN='Möglichkeiten: Eintrag als Alternative parken (Funktion folgt mit der nächsten Version), Häkchen „Als Ort ins Reiseprofil aufnehmen“ abwählen (der Stopp bleibt als Punkt ohne eigenes Profil) oder bewusst behalten.';
+
   // ============== SAVE ==============
   const handleSave=async()=>{
     const payload=buildPayload();
     // v0.14.3: Preview-Pfad nur für Admin (Mode-Select sitzt im Admin-Panel, das Curator/Master nicht sehen).
     // So wird ein versehentlich auf 'preview' stehender LocalStorage-Wert für Nicht-Admins ignoriert.
     if(mode==='preview'&&role==='admin'){setShowJson(true);return;}
+    // v0.29.2 (Punkt 2): ab 50.000 Zeichen nicht senden; Formularzustand bleibt unverändert.
+    const pjN=paramsJsonLen(payload);
+    if(pjN>=PJ_GRENZE){setSaveStatus('error');setSaveMsg(pjBlockText(pjN));setTimeout(()=>setSaveStatus(null),15000);return;}
+    let saveFehler=false;
     setSaveStatus('saving');setSaveMsg('Sende an API...');
     try{
       const data=await apiCall('POST','/save-draft',payload);
-      if(data.error){setSaveStatus('error');setSaveMsg('Fehler: '+data.error);}
+      const fe=saveErrText(data);
+      if(fe){saveFehler=true;setSaveStatus('error');setSaveMsg('Speichern fehlgeschlagen: '+fe);}
       else{
         setSaveStatus('success');
         setDraftPersisted(true);  // v0.19.4 (B-2): ab jetzt Updates → created_at wird nicht mehr gesendet
@@ -3869,13 +3909,13 @@ function App(){
         // v0.27.0 (B1): übernommene Interview-Daten sind gespeichert → Warnung und Zwischenspeicher weg.
         if(importUnsaved){setImportUnsaved(false);}
         // v0.26.1 (B2.4): offene Interview-Markierungen nur als Hinweis zählen (keine Sperre).
-        setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId+(openMarkCount>0?` — Hinweis: ${openMarkCount} Vorschläge aus Interview noch nicht bestätigt`:''));
+        setSaveMsg('Gespeichert! Entwurf-ID: '+entwurfId+(pjN>=PJ_HINWEIS?` — params_json ${fmtZ(pjN)} Zeichen`:'')+(openMarkCount>0?` — Hinweis: ${openMarkCount} Vorschläge aus Interview noch nicht bestätigt`:''));
         // URL aktualisieren für Refresh-Sicherheit
         const newUrl=window.location.pathname+'?entwurf_id='+encodeURIComponent(entwurfId);
         window.history.replaceState(null,'',newUrl);
       }
-    }catch(err){setSaveStatus('error');setSaveMsg('Fehler: '+err.message);}
-    setTimeout(()=>setSaveStatus(null),6000);
+    }catch(err){saveFehler=true;setSaveStatus('error');setSaveMsg('Speichern fehlgeschlagen: '+err.message);}
+    setTimeout(()=>setSaveStatus(null),saveFehler?15000:6000);
   };
 
   // v0.19.3 (Steffen-Wunsch): dauerhaft erreichbarer „Neue Reise"-Start. Mit Save-Rückfrage,
@@ -3884,9 +3924,13 @@ function App(){
   const handleNewTrip=async()=>{
     if(!confirm('Neue Reise starten? Die aktuelle Ansicht wird verlassen.')) return;
     if(entwurfId && isEditableStatus(tripStatus) && confirm('Aktuelle Reise vorher speichern?')){
+      const ntPayload=buildPayload();
+      const ntN=paramsJsonLen(ntPayload);
+      if(ntN>=PJ_GRENZE){alert(pjBlockText(ntN)+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
       try{
-        const res=await apiCall('POST','/save-draft',buildPayload());
-        if(res&&res.error){alert('Speichern fehlgeschlagen:\n'+res.error+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
+        const res=await apiCall('POST','/save-draft',ntPayload);
+        const fe=saveErrText(res);
+        if(fe){alert('Speichern fehlgeschlagen:\n'+fe+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
       }catch(e){alert('Speichern fehlgeschlagen:\n'+e.message+'\n\nNeue Reise wird NICHT gestartet, damit nichts verlorengeht.');return;}
     }
     window.location.href=window.location.pathname;
@@ -3974,15 +4018,21 @@ function App(){
   // v0.15: Eigentliche Transfer-Logik in separate Funktion ausgelagert, damit sie auch
   // nach Confirm-Dialog aufgerufen werden kann.
   const doTransfer=async()=>{
-    if(!confirm('Reise jetzt zur Master-Freigabe übergeben?\n\nNach Übergabe ist die Reise nicht mehr editierbar, bis sie vom Master/Admin freigegeben oder zurückgespielt wurde.')) return;
+    // v0.29.2 (Punkt 2): Übergeben speichert zuerst — ab 50.000 Zeichen weder speichern noch übergeben.
+    const tfN=paramsJsonLen(buildPayload());
+    if(tfN>=PJ_GRENZE){setTransferStatus('error');setTransferMsg(pjBlockText(tfN));setTimeout(()=>setTransferStatus(null),15000);return;}
+    // v0.29.2 (Punkt 3): Übersicht der Tage über den Richtwerten — nur Hinweis, Übergeben bleibt möglich.
+    const rwHinweis=rwTage.length?'\n\nHinweis Richtwerte je Tag (keine Sperre):\n'+rwTage.map(x=>'Tag '+x.nr+': '+x.ueber.join(', ')).join('\n'):'';
+    if(!confirm('Reise jetzt zur Master-Freigabe übergeben?\n\nNach Übergabe ist die Reise nicht mehr editierbar, bis sie vom Master/Admin freigegeben oder zurückgespielt wurde.'+rwHinweis)) return;
 
     setTransferStatus('saving');setTransferMsg('Speichere…');
     try{
       // 1) Save mit aktuellem Status 'entwurf'
       const savePayload=buildPayload();
       const saveRes=await apiCall('POST','/save-draft',savePayload);
-      if(saveRes.error){
-        setTransferStatus('error');setTransferMsg('Save fehlgeschlagen: '+saveRes.error);
+      const tfFe=saveErrText(saveRes);
+      if(tfFe){
+        setTransferStatus('error');setTransferMsg('Speichern fehlgeschlagen, nicht übergeben: '+tfFe);
         setTimeout(()=>setTransferStatus(null),8000);
         return;
       }
@@ -4411,7 +4461,7 @@ function App(){
     <div style={{background:'var(--white)',borderBottom:'3px solid var(--sage)',padding:'16px 24px',...(splitActive?{paddingRight:SPLIT_PAD_RIGHT}:{}),display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
       <div>
         <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontSize:22,color:'var(--sage)',fontWeight:700}}>WHISPERED WAYS</div>
-        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.1 (L-WW-143/138 · Einladen, Link anzeigen, Mailversand, Material vorab, whisperer_id-Schutz; Feldnamen c 2026-11-12)</div>
+        <div style={{fontSize:12,color:'#999',marginTop:2}}>Whisperer Onboarding — v0.29.2 (Aufgabe 75 · nur tag_story, Zeichenanzeige params_json, Tagesrichtwerte 3/6/3)</div>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <div style={{fontSize:11,color:'#999'}}>ID: {entwurfId||'—'}</div>
@@ -5040,6 +5090,12 @@ function App(){
         <div style={{background:'var(--sage-light)',padding:14,borderRadius:8,marginTop:16,marginBottom:16,fontSize:12}}>
           <strong>{tage.length} Tag(e)</strong> angelegt. Klick auf einen Tag zum Bearbeiten. Mit ↑↓ kannst du Tage und Einträge umsortieren, mit ✕ löschen. Hotels werden aus dem Pool (Reise-Ebene) zugeordnet.
         </div>
+        {/* v0.29.2 (Punkt 3, e-D228): Übersicht aller Tage über den Richtwerten — Hinweis, keine Sperre. */}
+        {rwTage.length>0&&<div data-rw-liste="1" style={{background:'#FFF8E1',border:'1px solid #E0B000',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'var(--anthrazit)'}}>
+          <div style={{fontWeight:700,marginBottom:4}}>Richtwerte je Tag überschritten (höchstens {RW_HAUPT} Hauptstationen, {RW_PUNKTE} Punkte, {RW_FOOD} Food/Drink)</div>
+          <ul style={{margin:'0 0 6px',paddingLeft:18}}>{rwTage.map(x=><li key={x.idx}>Tag {x.nr}: {x.ueber.join(', ')}</li>)}</ul>
+          <div style={{color:'#666'}}>{RW_OPTIONEN} Speichern und Übergeben bleiben möglich.</div>
+        </div>}
         {tage.map((tag,ti)=>{
           const open=openTags[ti]||false;
           // v0.19.2 (Schönheit): beim Aufklappen eines Tages das erste Sub-Item öffnen, falls noch
@@ -5079,6 +5135,8 @@ function App(){
               </div>
               {/* v0.26.1: offene Interview-Vorschläge dieses Tages im Kopf anzeigen (auch zugeklappt). */}
               {tag._marks&&Object.keys(tag._marks).length>0&&<span title="Offene Vorschläge aus Interview" style={{fontSize:10,fontWeight:700,color:'#8A3A24',background:'var(--coral-light)',padding:'2px 6px',borderRadius:4}}>{Object.keys(tag._marks).length} Vorschl.</span>}
+              {/* v0.29.2 (Punkt 3): Richtwert-Hinweis im Kopf (auch zugeklappt). */}
+              {(()=>{const rw=tagRichtwerte(tag);return rw.ueber.length?<span data-rw-tag={ti} title={rw.ueber.join(' · ')} style={{fontSize:10,fontWeight:700,color:'#7A5A00',background:'#FFF4CC',padding:'2px 6px',borderRadius:4,whiteSpace:'nowrap'}}>⚠ Richtwert</span>:null;})()}
               {tag.tag_typ&&<span style={{fontSize:11,color:'var(--sage)',background:'var(--white)',padding:'2px 8px',borderRadius:4}}>{tag.tag_typ}</span>}
               <span style={{fontSize:18,color:'var(--sage)'}}>{open?'▾':'▸'}</span>
             </div>
@@ -5115,6 +5173,11 @@ function App(){
                   beliebig gemischt anzeigbar (z.B. Aktivität, Frühstück, Stopp, Stopp, Mittag, Aktivität, ...).
                   Akkordeon-Modus: openItem trackt das eine offene Item pro Tag. */}
               <div style={{fontSize:13,fontFamily:"'Playfair Display',Georgia,serif",color:'var(--anthrazit)',fontWeight:700,marginTop:16,marginBottom:8}}>🗓️ Tagesablauf</div>
+              {/* v0.29.2 (Punkt 3): Hinweis je Tag mit Anzahl je Richtwert. */}
+              {(()=>{const rw=tagRichtwerte(tag);if(!rw.ueber.length)return null;return <div data-rw-hinweis={ti} style={{background:'#FFF8E1',border:'1px solid #E0B000',borderRadius:6,padding:'8px 12px',marginBottom:8,fontSize:12,color:'var(--anthrazit)'}}>
+                <div style={{fontWeight:700}}>Mehr als empfohlen: {rw.ueber.join(', ')}</div>
+                <div style={{color:'#666',marginTop:2}}>Stand: {rw.haupt} Hauptstationen · {rw.punkte} Punkte · {rw.food} Food/Drink. {RW_OPTIONEN}</div>
+              </div>;})()}
               {(()=>{
                 const schedule=getSortedSchedule(tag);
                 if(schedule.length===0){
@@ -5540,6 +5603,18 @@ function App(){
           {transferStatus==='error'&&<><span className="status-dot" style={{background:'#D32F2F'}}></span><span style={{fontSize:12,color:'#D32F2F'}}>{transferMsg}</span></>}
           {/* v0.14: Pflicht-Legende */}
           <span style={{fontSize:11,color:'#888',marginLeft:6}}><span style={{color:'var(--red)',fontWeight:700}}>*</span> = Pflichtfeld</span>
+          {/* v0.29.2 (Punkt 2): Zeichenanzeige params_json — Hinweis ab 40.000, Warnung ab 48.000, ab 50.000 kein Senden. */}
+          <span data-pj-stufe={pjStufe||'ok'} title="Länge des Formularzustands (params_json), wie er gespeichert wird. Google Sheets nimmt je Zelle höchstens 50.000 Zeichen." style={{fontSize:11,marginLeft:6,padding:'2px 8px',borderRadius:4,fontWeight:pjStufe?700:400,
+            color:pjStufe==='grenze'?'var(--white)':pjStufe==='warnung'?'#8A3A24':pjStufe==='hinweis'?'#7A5A00':'#888',
+            background:pjStufe==='grenze'?'var(--red)':pjStufe==='warnung'?'var(--coral-light)':pjStufe==='hinweis'?'#FFF4CC':'transparent',
+            border:pjStufe==='warnung'?'1px solid var(--coral)':'none'}}>
+            {pjStufe==='grenze'?`Speichern gesperrt: ${fmtZ(pjLen)} Zeichen (Grenze ${fmtZ(PJ_GRENZE)}) — Einträge parken oder Texte kürzen`
+              :pjStufe==='warnung'?`Warnung: ${fmtZ(pjLen)} Zeichen (Grenze ${fmtZ(PJ_GRENZE)}) — Einträge parken oder Texte kürzen`
+              :pjStufe==='hinweis'?`Hinweis: ${fmtZ(pjLen)} Zeichen (Grenze ${fmtZ(PJ_GRENZE)})`
+              :`${fmtZ(pjLen)} Zeichen`}
+          </span>
+          {/* v0.29.2 (Punkt 3): Übersicht Tage über den Richtwerten (keine Sperre). */}
+          {rwTage.length>0&&<span data-rw-uebersicht="1" title={rwTage.map(x=>'Tag '+x.nr+': '+x.ueber.join(', ')).join('\n')} style={{fontSize:11,marginLeft:6,padding:'2px 8px',borderRadius:4,fontWeight:700,color:'#7A5A00',background:'#FFF4CC'}}>⚠ Richtwerte überschritten: Tag {rwTage.map(x=>x.nr).join(', ')}</span>}
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           {/* v0.19.3: dauerhaft erreichbarer Neue-Reise-Start (mit Save-Rückfrage, s. handleNewTrip) */}
